@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import datetime
+import json
 import logging
 import os
 import pathlib
@@ -60,6 +61,15 @@ class ValuationResponse(BaseModel):
     )
     reasoning: str
     search_urls: list[str]
+
+
+class ValuationPerImage(BaseModel):
+    image_index: int
+    valuation: ValuationResponse
+
+
+class MultiValuationResponse(BaseModel):
+    results: list[ValuationPerImage]
 
 
 # --- Lifespan Management ---
@@ -265,9 +275,10 @@ async def upload_image(
         )
 
 
-@app.post("/value", response_model=ValuationResponse)
+@app.post("/value", response_model=MultiValuationResponse)
 async def estimate_item_value(
     description: Annotated[str, Form()],
+    image_items: Annotated[list[str], Form()] = [],
     image_urls: Annotated[list[str], Form()] = [],
     image_datas: Annotated[list[str], Form()] = [],
     content_types: Annotated[list[str], Form()] = [],
@@ -285,41 +296,110 @@ async def estimate_item_value(
     if content_type:
         content_types = [*content_types, content_type]
 
+    image_items = [s for s in image_items if s]
     image_urls = [u for u in image_urls if u]
     image_datas = [d for d in image_datas if d]
     content_types = [t for t in content_types if t]
 
-    if not image_urls and not image_datas:
+    if not image_items and not image_urls and not image_datas:
         raise HTTPException(
             status_code=400,
             detail="At least one image is required.",
         )
 
     try:
-        decoded_images: list[tuple[bytes, str]] = []
-        for i, data_url in enumerate(image_datas):
-            try:
-                _, encoded_data = data_url.split(",", 1)
-                decoded_image_data = base64.b64decode(encoded_data)
-            except Exception as e:
+        # Preferred input: ordered image_items (JSON per image) to preserve UI ordering.
+        normalized_items: list[dict] = []
+        if image_items:
+            for raw in image_items:
+                try:
+                    item = json.loads(raw)
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid image_items JSON.",
+                    ) from e
+                if not isinstance(item, dict):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid image_items JSON.",
+                    )
+                normalized_items.append(item)
+        else:
+            # Back-compat: old separate lists. Order is best-effort when URLs and inline data
+            # are mixed, because separate lists lose original ordering.
+            normalized_items.extend({"kind": "gcs", "gcs_uri": u} for u in image_urls)
+            for i, d in enumerate(image_datas):
+                normalized_items.append(
+                    {
+                        "kind": "inline",
+                        "data_url": d,
+                        "content_type": (
+                            content_types[i]
+                            if i < len(content_types) and content_types[i]
+                            else None
+                        ),
+                    },
+                )
+
+        results: list[ValuationPerImage] = []
+        for idx, item in enumerate(normalized_items):
+            kind = item.get("kind")
+            if kind == "gcs":
+                gcs_uri = item.get("gcs_uri")
+                if not gcs_uri or not isinstance(gcs_uri, str):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid image_items entry: missing gcs_uri.",
+                    )
+                valuation = estimate_value(
+                    image_uris=[gcs_uri],
+                    description=description,
+                    client=client,
+                    image_data_list=None,
+                    currency=currency,
+                )
+            elif kind == "inline":
+                data_url = item.get("data_url")
+                if not data_url or not isinstance(data_url, str):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid image_items entry: missing data_url.",
+                    )
+                try:
+                    _, encoded_data = data_url.split(",", 1)
+                    decoded_image_data = base64.b64decode(encoded_data)
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid image_data format.",
+                    ) from e
+
+                mime_type = item.get("content_type")
+                if mime_type is not None and not isinstance(mime_type, str):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid image_items entry: invalid content_type.",
+                    )
+                valuation = estimate_value(
+                    image_uris=None,
+                    description=description,
+                    client=client,
+                    image_data_list=[(decoded_image_data, mime_type or "image/jpeg")],
+                    currency=currency,
+                )
+            else:
                 raise HTTPException(
                     status_code=400,
-                    detail="Invalid image_data format.",
-                ) from e
+                    detail="Invalid image_items entry: unknown kind.",
+                )
 
-            mime_type = (
-                content_types[i] if i < len(content_types) and content_types[i] else None
-            )
-            decoded_images.append((decoded_image_data, mime_type or "image/jpeg"))
+            results.append(ValuationPerImage(image_index=idx, valuation=valuation))
 
-        response_data = estimate_value(
-            image_uris=image_urls or None,
-            description=description,
-            client=client,
-            image_data_list=decoded_images or None,
-            currency=currency,
-        )
+        response_data = MultiValuationResponse(results=results)
         return JSONResponse(content=response_data.model_dump())
+    except HTTPException:
+        raise
     except Exception:
         logging.exception("Internal server error in /value")
         raise HTTPException(

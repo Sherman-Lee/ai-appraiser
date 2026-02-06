@@ -355,10 +355,17 @@ def test_value_endpoint_success_gbp(
     )
     assert response.status_code == 200
     assert response.json() == {
-        "estimated_value": 123.45,
-        "currency": "GBP",
-        "reasoning": "Looks nice",
-        "search_urls": ["http://example.com"],
+        "results": [
+            {
+                "image_index": 0,
+                "valuation": {
+                    "estimated_value": 123.45,
+                    "currency": "GBP",
+                    "reasoning": "Looks nice",
+                    "search_urls": ["http://example.com"],
+                },
+            },
+        ],
     }
     mock_estimate_value.assert_called_once_with(
         image_uris=None,
@@ -390,10 +397,17 @@ def test_value_endpoint_success_image_url(
     )
     assert response.status_code == 200
     assert response.json() == {
-        "estimated_value": 123.45,
-        "currency": "USD",
-        "reasoning": "Looks nice from URL",
-        "search_urls": ["http://example.com/url_image"],
+        "results": [
+            {
+                "image_index": 0,
+                "valuation": {
+                    "estimated_value": 123.45,
+                    "currency": "USD",
+                    "reasoning": "Looks nice from URL",
+                    "search_urls": ["http://example.com/url_image"],
+                },
+            },
+        ],
     }
     mock_estimate_value.assert_called_once_with(
         image_uris=["gs://test-bucket/test_image.jpg"],
@@ -429,8 +443,38 @@ def test_value_endpoint_multiple_image_urls(
     )
 
     assert response.status_code == 200
-    mock_estimate_value.assert_called_once_with(
-        image_uris=["gs://test-bucket/image_1.jpg", "gs://test-bucket/image_2.jpg"],
+    assert response.json() == {
+        "results": [
+            {
+                "image_index": 0,
+                "valuation": {
+                    "estimated_value": 10.0,
+                    "currency": "USD",
+                    "reasoning": "Multiple URLs",
+                    "search_urls": [],
+                },
+            },
+            {
+                "image_index": 1,
+                "valuation": {
+                    "estimated_value": 10.0,
+                    "currency": "USD",
+                    "reasoning": "Multiple URLs",
+                    "search_urls": [],
+                },
+            },
+        ],
+    }
+    assert mock_estimate_value.call_count == 2
+    mock_estimate_value.assert_any_call(
+        image_uris=["gs://test-bucket/image_1.jpg"],
+        description="A test item with multiple URLs",
+        client=ANY,
+        image_data_list=None,
+        currency=Currency(DEFAULT_CURRENCY),
+    )
+    mock_estimate_value.assert_any_call(
+        image_uris=["gs://test-bucket/image_2.jpg"],
         description="A test item with multiple URLs",
         client=ANY,
         image_data_list=None,
@@ -464,14 +508,41 @@ def test_value_endpoint_multiple_image_datas(
     )
 
     assert response.status_code == 200
-    mock_estimate_value.assert_called_once_with(
+    assert response.json() == {
+        "results": [
+            {
+                "image_index": 0,
+                "valuation": {
+                    "estimated_value": 11.0,
+                    "currency": "USD",
+                    "reasoning": "Multiple inline images",
+                    "search_urls": [],
+                },
+            },
+            {
+                "image_index": 1,
+                "valuation": {
+                    "estimated_value": 11.0,
+                    "currency": "USD",
+                    "reasoning": "Multiple inline images",
+                    "search_urls": [],
+                },
+            },
+        ],
+    }
+    assert mock_estimate_value.call_count == 2
+    mock_estimate_value.assert_any_call(
         image_uris=None,
         description="A test item with multiple inline images",
         client=ANY,
-        image_data_list=[
-            (b"fake image content", "image/jpeg"),
-            (b"fake image data", "image/png"),
-        ],
+        image_data_list=[(b"fake image content", "image/jpeg")],
+        currency=Currency(DEFAULT_CURRENCY),
+    )
+    mock_estimate_value.assert_any_call(
+        image_uris=None,
+        description="A test item with multiple inline images",
+        client=ANY,
+        image_data_list=[(b"fake image data", "image/png")],
         currency=Currency(DEFAULT_CURRENCY),
     )
 
@@ -500,8 +571,38 @@ def test_value_endpoint_mixed_image_urls_and_datas(
     )
 
     assert response.status_code == 200
-    mock_estimate_value.assert_called_once_with(
+    assert response.json() == {
+        "results": [
+            {
+                "image_index": 0,
+                "valuation": {
+                    "estimated_value": 12.0,
+                    "currency": "USD",
+                    "reasoning": "Mixed images",
+                    "search_urls": [],
+                },
+            },
+            {
+                "image_index": 1,
+                "valuation": {
+                    "estimated_value": 12.0,
+                    "currency": "USD",
+                    "reasoning": "Mixed images",
+                    "search_urls": [],
+                },
+            },
+        ],
+    }
+    assert mock_estimate_value.call_count == 2
+    mock_estimate_value.assert_any_call(
         image_uris=["gs://test-bucket/url_image.jpg"],
+        description="A test item with mixed images",
+        client=ANY,
+        image_data_list=None,
+        currency=Currency(DEFAULT_CURRENCY),
+    )
+    mock_estimate_value.assert_any_call(
+        image_uris=None,
         description="A test item with mixed images",
         client=ANY,
         image_data_list=[(b"fake image content", "image/jpeg")],
@@ -533,10 +634,17 @@ def test_value_endpoint_uses_image_data_when_url_is_empty(
     )
     assert response.status_code == 200
     assert response.json() == {
-        "estimated_value": 50.0,
-        "currency": "CAD",
-        "reasoning": "Data with empty URL",
-        "search_urls": [],
+        "results": [
+            {
+                "image_index": 0,
+                "valuation": {
+                    "estimated_value": 50.0,
+                    "currency": "CAD",
+                    "reasoning": "Data with empty URL",
+                    "search_urls": [],
+                },
+            },
+        ],
     }
     mock_estimate_value.assert_called_once_with(
         image_uris=None,
@@ -574,21 +682,44 @@ def test_value_endpoint_both_inputs_prioritizes_url(
     )
     assert response.status_code == 200
     assert response.json() == {
-        "estimated_value": 200.0,
-        "currency": "JPY",
-        "reasoning": "URL should be prioritized",
-        "search_urls": ["http://example.com/both"],
+        "results": [
+            {
+                "image_index": 0,
+                "valuation": {
+                    "estimated_value": 200.0,
+                    "currency": "JPY",
+                    "reasoning": "URL should be prioritized",
+                    "search_urls": ["http://example.com/both"],
+                },
+            },
+            {
+                "image_index": 1,
+                "valuation": {
+                    "estimated_value": 200.0,
+                    "currency": "JPY",
+                    "reasoning": "URL should be prioritized",
+                    "search_urls": ["http://example.com/both"],
+                },
+            },
+        ],
     }
-    mock_estimate_value.assert_called_once()
-    kwargs = mock_estimate_value.call_args.kwargs
-    assert kwargs["image_uris"] == ["gs://test-bucket/preferred_image.jpg"]
-    assert kwargs["description"] == "A test item with both URL and data"
-    assert kwargs["currency"] == Currency.JPY
-    assert kwargs["image_data_list"] is not None
-    assert len(kwargs["image_data_list"]) == 1
-    decoded_bytes, mime_type = kwargs["image_data_list"][0]
-    assert mime_type == "image/gif"
-    assert decoded_bytes == base64.b64decode(image_data_str.split(",", 1)[1])
+    assert mock_estimate_value.call_count == 2
+    mock_estimate_value.assert_any_call(
+        image_uris=["gs://test-bucket/preferred_image.jpg"],
+        description="A test item with both URL and data",
+        client=ANY,
+        image_data_list=None,
+        currency=Currency.JPY,
+    )
+    mock_estimate_value.assert_any_call(
+        image_uris=None,
+        description="A test item with both URL and data",
+        client=ANY,
+        image_data_list=[
+            (base64.b64decode(image_data_str.split(",", 1)[1]), "image/gif"),
+        ],
+        currency=Currency.JPY,
+    )
 
 
 @patch("server.estimate_value")
@@ -685,9 +816,16 @@ def test_value_endpoint_integration_style(mock_google_cloud_clients_and_app) -> 
 
     assert response.status_code == 200
     assert response.json() == {
-        "estimated_value": 99.99,
-        "currency": "USD",
-        "reasoning": "Integration test success",
-        "search_urls": [],
+        "results": [
+            {
+                "image_index": 0,
+                "valuation": {
+                    "estimated_value": 99.99,
+                    "currency": "USD",
+                    "reasoning": "Integration test success",
+                    "search_urls": [],
+                },
+            },
+        ],
     }
     assert mock_models.generate_content.call_count == 2

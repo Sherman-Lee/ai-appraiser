@@ -238,16 +238,21 @@
           grid.appendChild(card);
         });
 
-        // Hidden fields: prefer GCS URIs when available (smaller payload than data URLs)
+        // Hidden fields: send ordered items so backend can value per image.
         uploadedImages.forEach((img) => {
-          if (img.gcsUri) {
-            hidden.appendChild(createHiddenInput("image_urls", img.gcsUri));
-          } else {
-            hidden.appendChild(createHiddenInput("image_datas", img.dataUrl));
-            hidden.appendChild(
-              createHiddenInput("content_types", img.contentType || "image/jpeg")
-            );
-          }
+          const item = img.gcsUri
+            ? {
+                kind: "gcs",
+                gcs_uri: img.gcsUri,
+                data_url: img.dataUrl,
+                content_type: img.contentType || "image/jpeg",
+              }
+            : {
+                kind: "inline",
+                data_url: img.dataUrl,
+                content_type: img.contentType || "image/jpeg",
+              };
+          hidden.appendChild(createHiddenInput("image_items", JSON.stringify(item)));
         });
       }
 
@@ -262,7 +267,7 @@
         .addEventListener("htmx:afterRequest", function (evt) {
           document.getElementById("spinner").classList.add("hidden");
           if (evt.detail.successful) {
-            const data = JSON.parse(evt.detail.xhr.response);
+            const payload = JSON.parse(evt.detail.xhr.response);
 
             // Format the currency
             function formatCurrency(value, currency) {
@@ -274,31 +279,67 @@
               }).format(value);
             }
 
-            const formattedValue = formatCurrency(
-              data.estimated_value,
-              data.currency
-            );
-
-            let resultsHTML = `
-                    <div class="bg-white p-4 rounded-lg shadow-md">
-                        <p class="font-semibold">Estimated Value:</p> <p class="text-2xl text-blue-600">${formattedValue}</p>
-                        <br>
-                        <p class="font-semibold">Reasoning:</p> <p class="text-sm text-gray-700">${data.reasoning}</p>`;
-
-            if (
-              data.search_urls &&
-              data.search_urls.length > 0 &&
-              data.search_urls[0] !== "N/A"
-            ) {
-              resultsHTML += `
-                        <br>
-                        <p class="font-semibold">Sources:</p>
-                        <ul class="text-sm list-disc list-inside ml-4">`;
-              data.search_urls.forEach((url) => {
-                resultsHTML += `<li><a href="${url}" target="_blank" class="text-blue-600 hover:underline">${url}</a></li>`;
-              });
-              resultsHTML += `</ul>`;
+            let results = payload && payload.results;
+            if (!Array.isArray(results)) {
+              // Back-compat: if server returns a single ValuationResponse object.
+              results = [{ image_index: 0, valuation: payload }];
             }
+
+            let resultsHTML = `<div class="space-y-4">`;
+
+            results.forEach((entry) => {
+              const imageIndex =
+                entry && typeof entry.image_index === "number"
+                  ? entry.image_index
+                  : 0;
+              const data = entry && entry.valuation ? entry.valuation : entry;
+
+              const thumb = uploadedImages[imageIndex]
+                ? uploadedImages[imageIndex].dataUrl
+                : null;
+
+              const formattedValue = formatCurrency(
+                data.estimated_value,
+                data.currency
+              );
+
+              resultsHTML += `
+                <div class="bg-white p-4 rounded-lg shadow-md">
+                  <div class="flex gap-4">
+                    <div class="w-24 h-24 shrink-0 border border-gray-200 rounded bg-white overflow-hidden flex items-center justify-center">
+                      ${
+                        thumb
+                          ? `<img src="${thumb}" alt="Image ${imageIndex + 1}" class="w-full h-full object-contain" />`
+                          : `<div class="text-xs text-gray-400 px-2 text-center">No preview</div>`
+                      }
+                    </div>
+                    <div class="min-w-0">
+                      <p class="font-semibold">Image ${imageIndex + 1}</p>
+                      <p class="font-semibold mt-2">Estimated Value:</p>
+                      <p class="text-2xl text-blue-600">${formattedValue}</p>
+                      <p class="font-semibold mt-3">Reasoning:</p>
+                      <p class="text-sm text-gray-700">${data.reasoning}</p>
+                    </div>
+                  </div>`;
+
+              if (
+                data.search_urls &&
+                data.search_urls.length > 0 &&
+                data.search_urls[0] !== "N/A"
+              ) {
+                resultsHTML += `
+                  <div class="mt-3">
+                    <p class="font-semibold">Sources:</p>
+                    <ul class="text-sm list-disc list-inside ml-4">`;
+                data.search_urls.forEach((url) => {
+                  resultsHTML += `<li><a href="${url}" target="_blank" class="text-blue-600 hover:underline">${url}</a></li>`;
+                });
+                resultsHTML += `</ul></div>`;
+              }
+
+              resultsHTML += `</div>`;
+            });
+
             resultsHTML += `</div>`;
             document.getElementById("results").innerHTML = resultsHTML;
           }
