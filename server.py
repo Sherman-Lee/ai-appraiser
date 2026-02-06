@@ -122,11 +122,10 @@ def get_data_url(file: UploadFile, contents: bytes) -> str:
 
 def estimate_value(
     *,
-    image_uri: str | None,
+    image_uris: list[str] | None,
     description: str,
     client: genai.Client,
-    image_data: bytes | None = None,
-    mime_type: str | None = None,
+    image_data_list: list[tuple[bytes, str]] | None = None,
     currency: Currency = Currency(DEFAULT_CURRENCY),
 ) -> ValuationResponse:
     """Calls Gemini API with Search Tool to estimate item value, then parses the result into a ValuationResponse."""
@@ -153,30 +152,33 @@ Return a text response only, not an executable code response.
         tools=[Tool(google_search=GoogleSearch())],
     )
 
-    if image_uri:
-        response_with_search = client.models.generate_content(
-            model=MODEL_ID,
-            contents=[
-                Part.from_uri(
-                    file_uri=image_uri,
-                    mime_type=guess_type(image_uri)[0] or "image/jpeg",
-                ),
-                valuation_prompt,
-            ],
-            config=config_with_search,
+    image_parts: list[Part] = []
+    if image_uris:
+        image_parts.extend(
+            Part.from_uri(
+                file_uri=image_uri,
+                mime_type=guess_type(image_uri)[0] or "image/jpeg",
+            )
+            for image_uri in image_uris
         )
-    elif image_data:
-        response_with_search = client.models.generate_content(
-            model=MODEL_ID,
-            contents=[
-                Part.from_bytes(data=image_data, mime_type=mime_type or "image/jpeg"),
-                valuation_prompt,
-            ],
-            config=config_with_search,
+    if image_data_list:
+        image_parts.extend(
+            Part.from_bytes(
+                data=image_data,
+                mime_type=mime_type or "image/jpeg",
+            )
+            for (image_data, mime_type) in image_data_list
         )
-    else:
-        msg = "Must provide either image_uri or image_data"
+
+    if not image_parts:
+        msg = "Must provide at least one image"
         raise ValueError(msg)
+
+    response_with_search = client.models.generate_content(
+        model=MODEL_ID,
+        contents=[*image_parts, valuation_prompt],
+        config=config_with_search,
+    )
 
     # Use final part of search results with answer
     valuation_text = None
@@ -266,6 +268,9 @@ async def upload_image(
 @app.post("/value", response_model=ValuationResponse)
 async def estimate_item_value(
     description: Annotated[str, Form()],
+    image_urls: Annotated[list[str], Form()] = [],
+    image_datas: Annotated[list[str], Form()] = [],
+    content_types: Annotated[list[str], Form()] = [],
     image_url: Annotated[str | None, Form()] = None,
     image_data: Annotated[str | None, Form()] = None,
     content_type: Annotated[str | None, Form()] = None,
@@ -273,32 +278,45 @@ async def estimate_item_value(
     client: genai.Client = Depends(get_genai_client),
 ):
     """Estimates the value of an item based on an image and text input."""
-    if not image_url and not image_data:
+    if image_url:
+        image_urls = [*image_urls, image_url]
+    if image_data:
+        image_datas = [*image_datas, image_data]
+    if content_type:
+        content_types = [*content_types, content_type]
+
+    image_urls = [u for u in image_urls if u]
+    image_datas = [d for d in image_datas if d]
+    content_types = [t for t in content_types if t]
+
+    if not image_urls and not image_datas:
         raise HTTPException(
             status_code=400,
-            detail="Either image_url or image_data is required.",
+            detail="At least one image is required.",
         )
 
     try:
-        decoded_image_data = None
-        # Only decode image_data if image_url is not provided.
-        if not image_url and image_data:
+        decoded_images: list[tuple[bytes, str]] = []
+        for i, data_url in enumerate(image_datas):
             try:
-                # Split data URL and decode base64 content
-                _, encoded_data = image_data.split(",", 1)
+                _, encoded_data = data_url.split(",", 1)
                 decoded_image_data = base64.b64decode(encoded_data)
             except Exception as e:
-                # Raise 400 on malformed image_data
                 raise HTTPException(
-                    status_code=400, detail="Invalid image_data format.",
+                    status_code=400,
+                    detail="Invalid image_data format.",
                 ) from e
 
+            mime_type = (
+                content_types[i] if i < len(content_types) and content_types[i] else None
+            )
+            decoded_images.append((decoded_image_data, mime_type or "image/jpeg"))
+
         response_data = estimate_value(
-            image_uri=image_url,
+            image_uris=image_urls or None,
             description=description,
             client=client,
-            image_data=decoded_image_data,
-            mime_type=content_type,
+            image_data_list=decoded_images or None,
             currency=currency,
         )
         return JSONResponse(content=response_data.model_dump())

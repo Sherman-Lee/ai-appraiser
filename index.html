@@ -29,7 +29,7 @@
           <p
             class="text-gray-700 bg-gradient-to-r from-blue-50 to-blue-100 px-4 py-2 rounded-lg shadow-md font-sans font-light text-lg"
           >
-            Discover the value of any item with an image
+            Discover the value of any item with one or more images
           </p>
         </div>
         <div
@@ -42,17 +42,19 @@
               <h2 class="text-xl font-semibold text-gray-700 mb-4">
                 Item Input
               </h2>
-              <div
-                id="image-preview"
-                class="mt-4 flex justify-center"
-                hx-swap="innerHTML"
-              >
+              <div id="image-preview" class="mt-4">
                 <div
-                  id="image-preview-inner"
-                  class="border-dashed border-2 border-blue-400 rounded-lg w-96 h-96 flex items-center justify-center hover:bg-gray-100 transition hidden"
+                  id="image-preview-empty"
+                  class="border-dashed border-2 border-blue-400 rounded-lg w-full h-40 flex items-center justify-center hover:bg-gray-100 transition"
                 >
-                  <span class="text-gray-500 text-sm">Image Preview</span>
+                  <span class="text-gray-500 text-sm"
+                    >Uploaded images will appear here</span
+                  >
                 </div>
+                <div
+                  id="image-preview-grid"
+                  class="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-3"
+                ></div>
               </div>
               <div class="dropzone-container">
                 <div class="mb-6">
@@ -94,15 +96,15 @@
                         id="image_file"
                         name="image_file"
                         type="file"
+                        multiple
+                        accept="image/*"
                         class="hidden"
-                        hx-post="/upload-image"
-                        hx-target="#image-preview"
-                        hx-encoding="multipart/form-data"
                       />
                     </label>
                   </div>
                 </div>
               </div>
+              <div id="upload-error" class="mt-2 text-sm text-red-600 hidden"></div>
 
               <form
                 id="valuation-form"
@@ -110,30 +112,7 @@
                 hx-target="#results"
                 hx-swap="innerHTML"
               >
-                <input
-                  type="hidden"
-                  id="image_url"
-                  name="image_url"
-                  value=""
-                  hx-trigger="load"
-                  hx-swap="none"
-                />
-                <input
-                  type="hidden"
-                  id="image_data"
-                  name="image_data"
-                  value=""
-                  hx-trigger="load"
-                  hx-swap="none"
-                />
-                <input
-                  type="hidden"
-                  id="content_type"
-                  name="content_type"
-                  value=""
-                  hx-trigger="load"
-                  hx-swap="none"
-                />
+                <div id="image-hidden-fields"></div>
                 <div class="mb-6 mt-4">
                   <label
                     for="description"
@@ -209,8 +188,68 @@
       </div>
     </div>
     <script>
-      let imageData = null;
-      let contentType = null;
+      let uploadedImages = [];
+
+      function setUploadError(message) {
+        const el = document.getElementById("upload-error");
+        if (!message) {
+          el.classList.add("hidden");
+          el.textContent = "";
+          return;
+        }
+        el.textContent = message;
+        el.classList.remove("hidden");
+      }
+
+      function createHiddenInput(name, value) {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = name;
+        input.value = value;
+        return input;
+      }
+
+      function renderUploadedImages() {
+        const empty = document.getElementById("image-preview-empty");
+        const grid = document.getElementById("image-preview-grid");
+        const hidden = document.getElementById("image-hidden-fields");
+
+        grid.innerHTML = "";
+        hidden.innerHTML = "";
+        setUploadError(null);
+
+        if (uploadedImages.length === 0) {
+          empty.classList.remove("hidden");
+          return;
+        }
+
+        empty.classList.add("hidden");
+
+        uploadedImages.forEach((img, idx) => {
+          const card = document.createElement("div");
+          card.className =
+            "relative border border-gray-300 rounded-lg bg-white overflow-hidden shadow-sm";
+          card.innerHTML = `
+              <img src="${img.dataUrl}" alt="Uploaded image ${idx + 1}" class="w-full h-28 object-contain bg-white" />
+              <button type="button" class="absolute top-1 right-1 bg-white/90 hover:bg-white text-gray-700 border border-gray-300 rounded px-2 py-0.5 text-xs" data-remove-index="${idx}">
+                Remove
+              </button>
+            `;
+          grid.appendChild(card);
+        });
+
+        // Hidden fields: prefer GCS URIs when available (smaller payload than data URLs)
+        uploadedImages.forEach((img) => {
+          if (img.gcsUri) {
+            hidden.appendChild(createHiddenInput("image_urls", img.gcsUri));
+          } else {
+            hidden.appendChild(createHiddenInput("image_datas", img.dataUrl));
+            hidden.appendChild(
+              createHiddenInput("content_types", img.contentType || "image/jpeg")
+            );
+          }
+        });
+      }
 
       document
         .getElementById("valuation-form")
@@ -266,46 +305,80 @@
         });
 
       document
-        .getElementById("image_file")
-        .addEventListener("htmx:afterRequest", function (evt) {
-          if (evt.detail.successful) {
-            const data = JSON.parse(evt.detail.xhr.response);
-            const preview = document.getElementById("image-preview");
-            if (data && data.data_url) {
-              // Construct the entire inner HTML, including the inner div and the image
-              preview.innerHTML = `
-                        <div id="image-preview-inner" class="border-solid border-2 border-gray-400 rounded-lg w-64 h-64 flex items-center justify-center p-0 hover:bg-gray-100 transition duration-300 bg-white">
-                            <img src="${data.data_url}" alt="Uploaded Image" class="max-w-full h-full mx-auto object-contain">
-                        </div>
-                    `;
-              document.getElementById("image_url").value = data.gcs_uri;
-              imageData = data.data_url;
-              contentType = data.content_type;
-              document.getElementById("image_data").value = imageData;
-              document.getElementById("content_type").value = contentType;
+        .getElementById("image-preview-grid")
+        .addEventListener("click", function (evt) {
+          const target = evt.target;
+          if (!(target instanceof HTMLElement)) return;
+          const removeIndexAttr = target.getAttribute("data-remove-index");
+          if (removeIndexAttr === null) return;
+          const idx = Number(removeIndexAttr);
+          if (!Number.isFinite(idx)) return;
+          uploadedImages.splice(idx, 1);
+          renderUploadedImages();
+        });
 
-              // Hide the dropzone and show the preview
-              document
-                .querySelector(".dropzone-container")
-                .classList.add("hidden");
-              document
-                .getElementById("image-preview-inner")
-                .classList.remove("hidden");
-              document
-                .getElementById("image-preview-inner")
-                .classList.add("bg-white");
+      async function uploadOneFile(file) {
+        const formData = new FormData();
+        formData.append("image_file", file);
+
+        const resp = await fetch("/upload-image", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!resp.ok) {
+          let detail = "An error occurred while uploading the image.";
+          try {
+            const body = await resp.json();
+            if (body && body.detail) detail = body.detail;
+          } catch {
+            // ignore JSON parse errors
+          }
+          throw new Error(detail);
+        }
+
+        return await resp.json();
+      }
+
+      document.getElementById("image_file").addEventListener("change", async (evt) => {
+        const input = evt.target;
+        if (!(input instanceof HTMLInputElement)) return;
+        const files = input.files ? Array.from(input.files) : [];
+        if (files.length === 0) return;
+
+        setUploadError(null);
+        input.disabled = true;
+
+        try {
+          for (const file of files) {
+            if (!file.type.startsWith("image/")) {
+              continue;
+            }
+            const data = await uploadOneFile(file);
+            if (data && data.data_url) {
+              uploadedImages.push({
+                dataUrl: data.data_url,
+                gcsUri: data.gcs_uri,
+                contentType: data.content_type,
+              });
+              renderUploadedImages();
             }
           }
-        });
+        } catch (e) {
+          setUploadError(e instanceof Error ? e.message : String(e));
+        } finally {
+          input.value = "";
+          input.disabled = false;
+        }
+      });
 
       const estimateValueButton = document.getElementById(
         "estimate-value-button"
       );
       if (estimateValueButton) {
         estimateValueButton.addEventListener("click", function (event) {
-          // Prioritize sending image_data if available, otherwise send image_url
-          if (!imageData && document.getElementById("image_url").value === "") {
-            alert("Please upload an image first.");
+          if (uploadedImages.length === 0) {
+            alert("Please upload at least one image first.");
             event.preventDefault();
           }
         });
@@ -317,26 +390,9 @@
           // Clear the description field
           document.getElementById("description").value = "";
 
-          // Reset the image preview
-          document.getElementById("image-preview").innerHTML = `
-              <div id="image-preview-inner" class="border-dashed border-2 border-blue-400 rounded-lg w-96 h-96 flex items-center justify-center hover:bg-gray-100 transition hidden">
-                <span class="text-gray-500 text-sm">Image Preview</span>
-              </div>
-            `;
-
-          // Clear hidden input fields
-          document.getElementById("image_url").value = "";
-          document.getElementById("image_data").value = "";
-          document.getElementById("content_type").value = "";
-
-          // Show the dropzone
-          document
-            .querySelector(".dropzone-container")
-            .classList.remove("hidden");
-
-          // Reset imageData and contentType
-          imageData = null;
-          contentType = null;
+          // Reset uploaded images + hidden fields
+          uploadedImages = [];
+          renderUploadedImages();
 
           // Clear valuation results
           document.getElementById("results").innerHTML = "";
@@ -345,6 +401,9 @@
           document.getElementById("currency").value = defaultCurrency;
         });
       }
+
+      // Initialize UI
+      renderUploadedImages();
     </script>
   </body>
 </html>

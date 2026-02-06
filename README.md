@@ -30,7 +30,7 @@ This application is intended for informational purposes only and should not subs
 The AI Appraiser application follows a client-server architecture:
 
 - **Frontend ([index.html](./index.html)):** The client-side interface built with HTML, Tailwind CSS, and HTMX. It handles user interactions, image uploads, and displays valuation results.
-- **Backend ([main.py](./main.py)):** A FastAPI server that handles API requests. It interacts with Google Cloud Storage (optional) and the Gemini API for image processing and valuation.
+- **Backend ([server.py](./server.py)):** A FastAPI server that handles API requests. It interacts with Google Cloud Storage (optional) and the Gemini API for image processing and valuation.
 - **Gemini API:** A powerful language model from Google that performs the core valuation logic, utilizing its built-in search tool for market data.
 
 ## Prerequisites
@@ -64,7 +64,7 @@ The AI Appraiser application follows a client-server architecture:
 2. **Run the application using Uvicorn:**
 
     ```bash
-    uvicorn main:app --host 0.0.0.0 --port 8080
+    uvicorn server:app --host 0.0.0.0 --port 8080
     ```
 
     The application will be accessible at `http://localhost:8080`.

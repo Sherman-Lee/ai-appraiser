@@ -9,7 +9,7 @@ from freezegun import freeze_time
 from google.api_core.exceptions import GoogleAPIError
 from pydantic import ValidationError
 
-from main import (
+from server import (
     DEFAULT_CURRENCY,
     Currency,
     ValuationResponse,
@@ -77,7 +77,7 @@ def test_estimate_value_image_uri_success_eur(
     )
 
     response = estimate_value(
-        image_uri="gs://some_bucket/some_image.jpg",
+        image_uris=["gs://some_bucket/some_image.jpg"],
         description="A test item",
         currency=Currency.EUR,
         client=mock_genai_client,
@@ -97,10 +97,9 @@ def test_estimate_value_image_data_success(mock_google_cloud_clients_and_app) ->
 
     image_data = b"fake image data"
     response = estimate_value(
-        image_uri=None,
+        image_uris=None,
         description="Test item with data",
-        image_data=image_data,
-        mime_type="image/jpeg",
+        image_data_list=[(image_data, "image/jpeg")],
         client=mock_genai_client,
     )
 
@@ -113,12 +112,11 @@ def test_estimate_value_image_data_success(mock_google_cloud_clients_and_app) ->
 
 def test_estimate_value_raises_exception_no_image() -> None:
     """Tests that estimate_value raises a ValueError when no image is provided."""
-    with pytest.raises(ValueError, match="Must provide either image_uri or image_data"):
+    with pytest.raises(ValueError, match="Must provide at least one image"):
         estimate_value(
-            image_uri=None,
+            image_uris=None,
             description="Test",
-            image_data=None,
-            mime_type=None,
+            image_data_list=None,
             client=MagicMock(),
         )
 
@@ -131,7 +129,7 @@ def test_estimate_value_valuation_api_error(mock_google_cloud_clients_and_app) -
 
     with pytest.raises(GoogleAPIError) as exc_info:
         estimate_value(
-            image_uri="gs://some_bucket/some_image.jpg",
+            image_uris=["gs://some_bucket/some_image.jpg"],
             description="A test item",
             client=mock_genai_client,
         )
@@ -148,7 +146,7 @@ def test_estimate_value_parsing_api_error(mock_google_cloud_clients_and_app) -> 
 
     with pytest.raises(GoogleAPIError) as exc_info:
         estimate_value(
-            image_uri="gs://some_bucket/some_image.jpg",
+            image_uris=["gs://some_bucket/some_image.jpg"],
             description="A test item",
             client=mock_genai_client,
         )
@@ -167,7 +165,7 @@ def test_estimate_value_malformed_json_response(
 
     with pytest.raises(ValidationError):
         estimate_value(
-            image_uri="gs://some_bucket/some_image.jpg",
+            image_uris=["gs://some_bucket/some_image.jpg"],
             description="A test item",
             client=mock_genai_client,
         )
@@ -181,7 +179,7 @@ def test_estimate_value_invalid_search_urls(mock_google_cloud_clients_and_app) -
 
     with pytest.raises(ValidationError):
         estimate_value(
-            image_uri="gs://some_bucket/some_image.jpg",
+            image_uris=["gs://some_bucket/some_image.jpg"],
             description="A test item",
             client=mock_genai_client,
         )
@@ -197,10 +195,34 @@ def test_estimate_value_invalid_estimated_value(
 
     with pytest.raises(ValidationError):
         estimate_value(
-            image_uri="gs://some_bucket/some_image.jpg",
+            image_uris=["gs://some_bucket/some_image.jpg"],
             description="A test item",
             client=mock_genai_client,
         )
+
+
+def test_estimate_value_multiple_image_uris_sends_multiple_parts(
+    mock_google_cloud_clients_and_app,
+) -> None:
+    _, _, mock_genai_client = mock_google_cloud_clients_and_app
+    mock_models = mock_genai_client.models
+    mock_models.generate_content.side_effect = create_mock_gemini_responses()
+
+    estimate_value(
+        image_uris=[
+            "gs://some_bucket/some_image_1.jpg",
+            "gs://some_bucket/some_image_2.png",
+        ],
+        description="A test item",
+        client=mock_genai_client,
+    )
+
+    assert mock_models.generate_content.call_count == 2
+    first_call_kwargs = mock_models.generate_content.call_args_list[0].kwargs
+    contents = first_call_kwargs["contents"]
+    assert len(contents) == 3
+    assert isinstance(contents[-1], str)
+    assert contents[-1].startswith("You are a professional appraiser")
 
 
 @freeze_time("2023-01-01 12:00:00")
@@ -211,7 +233,7 @@ def test_upload_image_to_gcs(mock_google_cloud_clients_and_app) -> None:
     mock_bucket.name = "test-bucket"
     mock_blob = mock_bucket.blob.return_value
 
-    with patch("main.STORAGE_BUCKET", "test-bucket"):
+    with patch("server.STORAGE_BUCKET", "test-bucket"):
         file_content = b"fake image content"
         mock_file = MagicMock()
         mock_file.filename = "test.jpg"
@@ -232,8 +254,8 @@ def test_upload_image_to_gcs(mock_google_cloud_clients_and_app) -> None:
         )
 
 
-@patch("main.STORAGE_BUCKET", "test-bucket")
-@patch("main.upload_image_to_gcs")
+@patch("server.STORAGE_BUCKET", "test-bucket")
+@patch("server.upload_image_to_gcs")
 def test_upload_image_endpoint_success_with_gcs(
     mock_upload_image_to_gcs,
     mock_google_cloud_clients_and_app,
@@ -254,8 +276,8 @@ def test_upload_image_endpoint_success_with_gcs(
     mock_upload_image_to_gcs.assert_called_once()
 
 
-@patch("main.STORAGE_BUCKET", None)
-@patch("main.upload_image_to_gcs")  # Still mock to ensure it's NOT called
+@patch("server.STORAGE_BUCKET", None)
+@patch("server.upload_image_to_gcs")  # Still mock to ensure it's NOT called
 def test_upload_image_no_storage_bucket(
     mock_upload_image_to_gcs_not_called,
     mock_google_cloud_clients_and_app,
@@ -278,8 +300,8 @@ def test_upload_image_no_storage_bucket(
     mock_upload_image_to_gcs_not_called.assert_not_called()
 
 
-@patch("main.STORAGE_BUCKET", "test-bucket")  # Ensure STORAGE_BUCKET is set
-@patch("main.upload_image_to_gcs")
+@patch("server.STORAGE_BUCKET", "test-bucket")  # Ensure STORAGE_BUCKET is set
+@patch("server.upload_image_to_gcs")
 def test_upload_image_gcs_upload_fails(
     mock_upload_image_to_gcs,
     mock_google_cloud_clients_and_app,
@@ -310,7 +332,7 @@ def test_upload_image_invalid_type(mock_google_cloud_clients_and_app) -> None:
     }
 
 
-@patch("main.estimate_value")
+@patch("server.estimate_value")
 def test_value_endpoint_success_gbp(
     mock_estimate_value,
     mock_google_cloud_clients_and_app,
@@ -326,8 +348,8 @@ def test_value_endpoint_success_gbp(
         "/value",
         data={
             "description": "A test item",
-            "image_data": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
-            "content_type": "image/jpeg",
+            "image_datas": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
+            "content_types": "image/jpeg",
             "currency": "GBP",
         },
     )
@@ -339,16 +361,15 @@ def test_value_endpoint_success_gbp(
         "search_urls": ["http://example.com"],
     }
     mock_estimate_value.assert_called_once_with(
-        image_uri=None,
+        image_uris=None,
         description="A test item",
         client=ANY,
-        image_data=b"fake image content",
-        mime_type="image/jpeg",
+        image_data_list=[(b"fake image content", "image/jpeg")],
         currency=Currency.GBP,
     )
 
 
-@patch("main.estimate_value")
+@patch("server.estimate_value")
 def test_value_endpoint_success_image_url(
     mock_estimate_value,
     mock_google_cloud_clients_and_app,
@@ -364,7 +385,7 @@ def test_value_endpoint_success_image_url(
         "/value",
         data={
             "description": "A test item from URL",
-            "image_url": "gs://test-bucket/test_image.jpg",
+            "image_urls": "gs://test-bucket/test_image.jpg",
         },
     )
     assert response.status_code == 200
@@ -375,16 +396,120 @@ def test_value_endpoint_success_image_url(
         "search_urls": ["http://example.com/url_image"],
     }
     mock_estimate_value.assert_called_once_with(
-        image_uri="gs://test-bucket/test_image.jpg",
+        image_uris=["gs://test-bucket/test_image.jpg"],
         description="A test item from URL",
         client=ANY,
-        image_data=None,
-        mime_type=None,
+        image_data_list=None,
         currency=Currency(DEFAULT_CURRENCY),
     )
 
 
-@patch("main.estimate_value")
+@patch("server.estimate_value")
+def test_value_endpoint_multiple_image_urls(
+    mock_estimate_value,
+    mock_google_cloud_clients_and_app,
+) -> None:
+    client, _, _ = mock_google_cloud_clients_and_app
+    mock_estimate_value.return_value = ValuationResponse(
+        estimated_value=10.0,
+        currency=Currency.USD,
+        reasoning="Multiple URLs",
+        search_urls=[],
+    )
+
+    response = client.post(
+        "/value",
+        data={
+            "description": "A test item with multiple URLs",
+            "image_urls": [
+                "gs://test-bucket/image_1.jpg",
+                "gs://test-bucket/image_2.jpg",
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    mock_estimate_value.assert_called_once_with(
+        image_uris=["gs://test-bucket/image_1.jpg", "gs://test-bucket/image_2.jpg"],
+        description="A test item with multiple URLs",
+        client=ANY,
+        image_data_list=None,
+        currency=Currency(DEFAULT_CURRENCY),
+    )
+
+
+@patch("server.estimate_value")
+def test_value_endpoint_multiple_image_datas(
+    mock_estimate_value,
+    mock_google_cloud_clients_and_app,
+) -> None:
+    client, _, _ = mock_google_cloud_clients_and_app
+    mock_estimate_value.return_value = ValuationResponse(
+        estimated_value=11.0,
+        currency=Currency.USD,
+        reasoning="Multiple inline images",
+        search_urls=[],
+    )
+
+    response = client.post(
+        "/value",
+        data={
+            "description": "A test item with multiple inline images",
+            "image_datas": [
+                "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
+                "data:image/png;base64,ZmFrZSBpbWFnZSBkYXRh",
+            ],
+            "content_types": ["image/jpeg", "image/png"],
+        },
+    )
+
+    assert response.status_code == 200
+    mock_estimate_value.assert_called_once_with(
+        image_uris=None,
+        description="A test item with multiple inline images",
+        client=ANY,
+        image_data_list=[
+            (b"fake image content", "image/jpeg"),
+            (b"fake image data", "image/png"),
+        ],
+        currency=Currency(DEFAULT_CURRENCY),
+    )
+
+
+@patch("server.estimate_value")
+def test_value_endpoint_mixed_image_urls_and_datas(
+    mock_estimate_value,
+    mock_google_cloud_clients_and_app,
+) -> None:
+    client, _, _ = mock_google_cloud_clients_and_app
+    mock_estimate_value.return_value = ValuationResponse(
+        estimated_value=12.0,
+        currency=Currency.USD,
+        reasoning="Mixed images",
+        search_urls=[],
+    )
+
+    response = client.post(
+        "/value",
+        data={
+            "description": "A test item with mixed images",
+            "image_urls": ["gs://test-bucket/url_image.jpg"],
+            "image_datas": ["data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50"],
+            "content_types": ["image/jpeg"],
+        },
+    )
+
+    assert response.status_code == 200
+    mock_estimate_value.assert_called_once_with(
+        image_uris=["gs://test-bucket/url_image.jpg"],
+        description="A test item with mixed images",
+        client=ANY,
+        image_data_list=[(b"fake image content", "image/jpeg")],
+        currency=Currency(DEFAULT_CURRENCY),
+    )
+
+
+@patch("server.estimate_value")
 def test_value_endpoint_uses_image_data_when_url_is_empty(
     mock_estimate_value,
     mock_google_cloud_clients_and_app,
@@ -400,9 +525,9 @@ def test_value_endpoint_uses_image_data_when_url_is_empty(
         "/value",
         data={
             "description": "A test item with empty URL",
-            "image_url": "",
-            "image_data": "data:image/png;base64,ZmFrZSBpbWFnZSBkYXRh",
-            "content_type": "image/png",
+            "image_urls": "",
+            "image_datas": "data:image/png;base64,ZmFrZSBpbWFnZSBkYXRh",
+            "content_types": "image/png",
             "currency": "CAD",
         },
     )
@@ -414,16 +539,15 @@ def test_value_endpoint_uses_image_data_when_url_is_empty(
         "search_urls": [],
     }
     mock_estimate_value.assert_called_once_with(
-        image_uri="",
+        image_uris=None,
         description="A test item with empty URL",
         client=ANY,
-        image_data=b"fake image data",
-        mime_type="image/png",
+        image_data_list=[(b"fake image data", "image/png")],
         currency=Currency.CAD,
     )
 
 
-@patch("main.estimate_value")
+@patch("server.estimate_value")
 def test_value_endpoint_both_inputs_prioritizes_url(
     mock_estimate_value,
     mock_google_cloud_clients_and_app,
@@ -442,9 +566,9 @@ def test_value_endpoint_both_inputs_prioritizes_url(
         "/value",
         data={
             "description": "A test item with both URL and data",
-            "image_url": "gs://test-bucket/preferred_image.jpg",
-            "image_data": image_data_str,
-            "content_type": "image/gif",
+            "image_urls": "gs://test-bucket/preferred_image.jpg",
+            "image_datas": image_data_str,
+            "content_types": "image/gif",
             "currency": "JPY",
         },
     )
@@ -455,20 +579,19 @@ def test_value_endpoint_both_inputs_prioritizes_url(
         "reasoning": "URL should be prioritized",
         "search_urls": ["http://example.com/both"],
     }
-    # Decode the image data from the data URL to ensure the bytes match exactly
-    base64.b64decode(image_data_str.split(",", 1)[1])
+    mock_estimate_value.assert_called_once()
+    kwargs = mock_estimate_value.call_args.kwargs
+    assert kwargs["image_uris"] == ["gs://test-bucket/preferred_image.jpg"]
+    assert kwargs["description"] == "A test item with both URL and data"
+    assert kwargs["currency"] == Currency.JPY
+    assert kwargs["image_data_list"] is not None
+    assert len(kwargs["image_data_list"]) == 1
+    decoded_bytes, mime_type = kwargs["image_data_list"][0]
+    assert mime_type == "image/gif"
+    assert decoded_bytes == base64.b64decode(image_data_str.split(",", 1)[1])
 
-    mock_estimate_value.assert_called_once_with(
-        image_uri="gs://test-bucket/preferred_image.jpg",
-        description="A test item with both URL and data",
-        client=ANY,
-        image_data=None,
-        mime_type="image/gif",
-        currency=Currency.JPY,
-    )
 
-
-@patch("main.estimate_value")
+@patch("server.estimate_value")
 def test_value_endpoint_estimate_value_exception(
     mock_estimate_value,
     mock_google_cloud_clients_and_app,
@@ -479,8 +602,8 @@ def test_value_endpoint_estimate_value_exception(
         "/value",
         data={
             "description": "A test item that causes an error",
-            "image_data": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
-            "content_type": "image/jpeg",
+            "image_datas": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
+            "content_types": "image/jpeg",
         },
     )
     assert response.status_code == 500
@@ -492,7 +615,7 @@ def test_value_endpoint_no_image_provided(mock_google_cloud_clients_and_app) -> 
     client, _, _ = mock_google_cloud_clients_and_app
     response = client.post("/value", data={"description": "A test item"})
     assert response.status_code == 400
-    assert response.json() == {"detail": "Either image_url or image_data is required."}
+    assert response.json() == {"detail": "At least one image is required."}
 
 
 def _assert_html_contains_currency(response, currency) -> None:
@@ -506,7 +629,7 @@ def test_read_root_serves_html_with_default_currency(
     mock_google_cloud_clients_and_app,
 ) -> None:
     client, _, _ = mock_google_cloud_clients_and_app
-    with patch("main.DEFAULT_CURRENCY", "XYZ"):
+    with patch("server.DEFAULT_CURRENCY", "XYZ"):
         response = client.get("/")
         _assert_html_contains_currency(response, "XYZ")
 
@@ -524,8 +647,8 @@ def test_value_endpoint_invalid_currency(mock_google_cloud_clients_and_app) -> N
         "/value",
         data={
             "description": "A test item",
-            "image_data": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
-            "content_type": "image/jpeg",
+            "image_datas": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
+            "content_types": "image/jpeg",
             "currency": "INVALID_CURRENCY",
         },
     )
@@ -554,8 +677,8 @@ def test_value_endpoint_integration_style(mock_google_cloud_clients_and_app) -> 
         "/value",
         data={
             "description": "An integration test item",
-            "image_data": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
-            "content_type": "image/jpeg",
+            "image_datas": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
+            "content_types": "image/jpeg",
             "currency": "USD",
         },
     )
