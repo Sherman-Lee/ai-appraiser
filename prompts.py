@@ -21,4 +21,4 @@ PARSING_PROMPT = """Here is the valuation text: {0}
 Your task is to parse this text into an array of one or more JSON objects that adheres to the ValuationResponse schema.
 Provide detailed reasoning without linking that reasoning to the source information, such as 'based on the image'.
 The ValuationResponse schema is: {1}
-Ensure the JSON is valid and contains the estimated_value, currency (using ISO 4217 currency code): {2}, reasoning, and search_urls fields."""
+Ensure the JSON is valid and contains the item_name, estimated_value, currency (using ISO 4217 currency code): {2}, reasoning, and search_urls fields."""

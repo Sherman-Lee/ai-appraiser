@@ -13,6 +13,7 @@ class Currency(str, Enum):
 
 
 class ValuationResponse(BaseModel):
+    item_name: str
     estimated_value: float
     currency: Currency = Field(
         Currency(DEFAULT_CURRENCY),

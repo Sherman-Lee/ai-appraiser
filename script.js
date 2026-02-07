@@ -155,13 +155,20 @@ document
             data.estimated_value,
             data.currency
           );
+          const rawName =
+            data.item_name != null ? String(data.item_name).trim() : "";
           const itemLabel =
-            valuations.length > 1 ? `Item ${vIdx + 1}: ` : "";
+            rawName !== ""
+              ? rawName
+              : valuations.length > 1
+                ? `Item ${vIdx + 1}`
+                : "";
           resultsHTML += `
                 <div class="mt-3 ${vIdx > 0 ? "pt-3 border-t border-gray-200" : ""}">
-                  <p class="text-xs text-gray-500 mt-2">${itemLabel}Estimated value</p>
+                  <p class="font-medium text-gray-700 mt-3 text-sm">${itemLabel}</p>
+                  <p class="text-xs text-gray-500 mt-2">Estimated value</p>
                   <p class="text-3xl font-semibold text-primary-600 mt-0.5">${formattedValue}</p>
-                  <p class="font-medium text-gray-700 mt-3 text-sm">How we estimated</p>
+                  <p class="text-xs text-gray-500 mt-2">How we estimated</p>
                   <p class="text-sm text-gray-600">${data.reasoning}</p>`;
 
           if (
@@ -171,7 +178,7 @@ document
           ) {
             resultsHTML += `
                   <div class="mt-3">
-                    <p class="font-medium text-gray-700 text-sm">Reference links</p>
+                    <p class="text-xs text-gray-500 mt-2">Reference links</p>
                     <ul class="text-sm list-disc list-inside ml-4 mt-1">`;
             data.search_urls.forEach((url) => {
               resultsHTML += `<li class="break-all"><a href="${url}" target="_blank" rel="noopener noreferrer" class="text-primary-600 hover:underline break-all">${url}</a></li>`;
