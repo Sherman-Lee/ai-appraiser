@@ -8,9 +8,10 @@ from mimetypes import guess_type
 
 import base64
 import datetime
+import json
 import logging
 
-from data_model import Currency, ValuationResponse
+from data_model import Currency, ValuationParsingResult, ValuationResponse
 from env_config import STORAGE_BUCKET, GCS_FILENAME_MAX_LEN, DEFAULT_CURRENCY, MODEL_ID
 from prompts import VALUATION_PROMPT, PARSING_PROMPT
 
@@ -52,8 +53,8 @@ def estimate_value(
     client: genai.Client,
     image_data_list: list[tuple[bytes, str]] | None = None,
     currency: Currency = Currency(DEFAULT_CURRENCY),
-) -> ValuationResponse:
-    """Calls Gemini API with Search Tool to estimate item value, then parses the result into a ValuationResponse."""
+) -> list[ValuationResponse]:
+    """Calls Gemini API with Search Tool to estimate item value, then parses the result into a list of ValuationResponse."""
     assert client is not None
     valuation_prompt = VALUATION_PROMPT.format(description, currency.value)
     config_with_search = GenerateContentConfig(
@@ -105,13 +106,17 @@ def estimate_value(
         msg = "Failed to get a text response from the valuation model."
         raise ValueError(msg)
 
-    # Second Gemini call to parse the valuation string into a ValuationResponse
+    # Second Gemini call to parse the valuation string into a list of ValuationResponse
     config_for_parsing = GenerateContentConfig(
         response_mime_type="application/json",
-        response_schema=ValuationResponse,
+        response_schema=ValuationParsingResult,
     )
-    
-    parsing_prompt = PARSING_PROMPT.format(valuation_text, ValuationResponse.model_json_schema(), currency.value)
+
+    parsing_prompt = PARSING_PROMPT.format(
+        valuation_text,
+        ValuationParsingResult.model_json_schema(),
+        currency.value,
+    )
     response_for_parsing = client.models.generate_content(
         model=MODEL_ID,
         contents=parsing_prompt,
@@ -124,11 +129,21 @@ def estimate_value(
         msg = "Failed to get a valid JSON response from the parsing model."
         raise ValueError(msg)
 
-    validated_response = ValuationResponse.model_validate_json(valuation_response_text)
-    if validated_response.currency != currency:
-        logging.warning(
-            "Model returned currency '%s' but '%s' was requested.",
-            validated_response.currency.value,
-            currency.value,
-        )
-    return validated_response
+    parsed = json.loads(valuation_response_text)
+    if isinstance(parsed, list):
+        validated_list = [ValuationResponse.model_validate(obj) for obj in parsed]
+    elif isinstance(parsed, dict) and "valuations" in parsed:
+        validated_list = [
+            ValuationResponse.model_validate(obj) for obj in parsed["valuations"]
+        ]
+    else:
+        validated_list = [ValuationResponse.model_validate(parsed)]
+
+    for v in validated_list:
+        if v.currency != currency:
+            logging.warning(
+                "Model returned currency '%s' but '%s' was requested.",
+                v.currency.value,
+                currency.value,
+            )
+    return validated_list

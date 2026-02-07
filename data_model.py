@@ -22,9 +22,15 @@ class ValuationResponse(BaseModel):
     search_urls: list[str]
 
 
+class ValuationParsingResult(BaseModel):
+    """Wrapper for parsing Gemini output: array of ValuationResponse."""
+
+    valuations: list[ValuationResponse]
+
+
 class ValuationPerImage(BaseModel):
     image_index: int
-    valuation: ValuationResponse
+    valuations: list[ValuationResponse]
 
 
 class MultiValuationResponse(BaseModel):

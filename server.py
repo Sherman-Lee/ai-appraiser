@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from google import genai
 from google.cloud import storage
 from typing_extensions import Annotated
@@ -163,7 +164,7 @@ async def estimate_item_value(
                         status_code=400,
                         detail="Invalid image_items entry: missing gcs_uri.",
                     )
-                valuation = estimate_value(
+                valuations = estimate_value(
                     image_uris=[gcs_uri],
                     description=description,
                     client=client,
@@ -192,7 +193,7 @@ async def estimate_item_value(
                         status_code=400,
                         detail="Invalid image_items entry: invalid content_type.",
                     )
-                valuation = estimate_value(
+                valuations = estimate_value(
                     image_uris=None,
                     description=description,
                     client=client,
@@ -205,7 +206,7 @@ async def estimate_item_value(
                     detail="Invalid image_items entry: unknown kind.",
                 )
 
-            results.append(ValuationPerImage(image_index=idx, valuation=valuation))
+            results.append(ValuationPerImage(image_index=idx, valuations=valuations))
 
         response_data = MultiValuationResponse(results=results)
         return JSONResponse(content=response_data.model_dump())
@@ -217,6 +218,10 @@ async def estimate_item_value(
             status_code=500,
             detail="An internal error occurred during valuation.",
         )
+
+
+# Serve static files (e.g. script.js) from the same directory as server.py
+app.mount("/static", StaticFiles(directory=pathlib.Path(__file__).parent), name="static")
 
 
 @app.get("/", response_class=HTMLResponse)

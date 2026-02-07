@@ -9,10 +9,10 @@ from freezegun import freeze_time
 from google.api_core.exceptions import GoogleAPIError
 from pydantic import ValidationError
 
+from data_model import ValuationResponse
 from server import (
     DEFAULT_CURRENCY,
     Currency,
-    ValuationResponse,
     estimate_value,
     get_data_url,
     upload_image_to_gcs,
@@ -42,9 +42,9 @@ def create_mock_gemini_responses(
 
         parsing_response = MagicMock(text=json.dumps(parsing_response_dict))
     else:
-        # Default successful parsing response
+        # Default successful parsing response (wrapper with valuations array)
         parsing_response = MagicMock(
-            text=f'{{"estimated_value": 100.0, "currency": "{DEFAULT_CURRENCY}", "reasoning": "Looks good", "search_urls": ["example.com"]}}',
+            text=f'{{"valuations": [{{"estimated_value": 100.0, "currency": "{DEFAULT_CURRENCY}", "reasoning": "Looks good", "search_urls": ["example.com"]}}]}}',
         )
 
     return [valuation_mock, parsing_response]
@@ -69,10 +69,14 @@ def test_estimate_value_image_uri_success_eur(
     mock_models = mock_genai_client.models
     mock_models.generate_content.side_effect = create_mock_gemini_responses(
         parsing_response_dict={
-            "estimated_value": 100.0,
-            "currency": "EUR",
-            "reasoning": "Looks good",
-            "search_urls": ["example.com"],
+            "valuations": [
+                {
+                    "estimated_value": 100.0,
+                    "currency": "EUR",
+                    "reasoning": "Looks good",
+                    "search_urls": ["example.com"],
+                },
+            ],
         },
     )
 
@@ -83,10 +87,11 @@ def test_estimate_value_image_uri_success_eur(
         client=mock_genai_client,
     )
 
-    assert response.estimated_value == 100.0
-    assert response.currency == Currency.EUR
-    assert response.reasoning == "Looks good"
-    assert response.search_urls == ["example.com"]
+    assert len(response) == 1
+    assert response[0].estimated_value == 100.0
+    assert response[0].currency == Currency.EUR
+    assert response[0].reasoning == "Looks good"
+    assert response[0].search_urls == ["example.com"]
     assert mock_models.generate_content.call_count == 2
 
 
@@ -103,10 +108,11 @@ def test_estimate_value_image_data_success(mock_google_cloud_clients_and_app) ->
         client=mock_genai_client,
     )
 
-    assert response.estimated_value == 100.0
-    assert response.currency == Currency(DEFAULT_CURRENCY)
-    assert response.reasoning == "Looks good"
-    assert response.search_urls == ["example.com"]
+    assert len(response) == 1
+    assert response[0].estimated_value == 100.0
+    assert response[0].currency == Currency(DEFAULT_CURRENCY)
+    assert response[0].reasoning == "Looks good"
+    assert response[0].search_urls == ["example.com"]
     assert mock_models.generate_content.call_count == 2
 
 
@@ -159,7 +165,7 @@ def test_estimate_value_malformed_json_response(
     _, _, mock_genai_client = mock_google_cloud_clients_and_app
     mock_genai_client.models.generate_content.side_effect = (
         create_mock_gemini_responses(
-            parsing_response_text='{"wrong_field": "some value", "currency": "USD"}',
+            parsing_response_text='{"valuations": [{"wrong_field": "some value", "currency": "USD"}]}',
         )
     )
 
@@ -174,7 +180,7 @@ def test_estimate_value_malformed_json_response(
 def test_estimate_value_invalid_search_urls(mock_google_cloud_clients_and_app) -> None:
     _, _, mock_genai_client = mock_google_cloud_clients_and_app
     mock_genai_client.models.generate_content.side_effect = create_mock_gemini_responses(
-        parsing_response_text='{"estimated_value": 100.0, "currency": "USD", "reasoning": "Looks good", "search_urls": "not-a-list"}',
+        parsing_response_text='{"valuations": [{"estimated_value": 100.0, "currency": "USD", "reasoning": "Looks good", "search_urls": "not-a-list"}]}',
     )
 
     with pytest.raises(ValidationError):
@@ -190,7 +196,7 @@ def test_estimate_value_invalid_estimated_value(
 ) -> None:
     _, _, mock_genai_client = mock_google_cloud_clients_and_app
     mock_genai_client.models.generate_content.side_effect = create_mock_gemini_responses(
-        parsing_response_text='{"estimated_value": "not-a-number", "currency": "USD", "reasoning": "Looks good", "search_urls": ["example.com"]}',
+        parsing_response_text='{"valuations": [{"estimated_value": "not-a-number", "currency": "USD", "reasoning": "Looks good", "search_urls": ["example.com"]}]}',
     )
 
     with pytest.raises(ValidationError):
@@ -199,6 +205,45 @@ def test_estimate_value_invalid_estimated_value(
             description="A test item",
             client=mock_genai_client,
         )
+
+
+def test_estimate_value_returns_multiple_valuations(
+    mock_google_cloud_clients_and_app,
+) -> None:
+    """When parsing returns multiple ValuationResponse objects, estimate_value returns a list of all."""
+    _, _, mock_genai_client = mock_google_cloud_clients_and_app
+    mock_models = mock_genai_client.models
+    mock_models.generate_content.side_effect = create_mock_gemini_responses(
+        parsing_response_dict={
+            "valuations": [
+                {
+                    "estimated_value": 50.0,
+                    "currency": "USD",
+                    "reasoning": "First item",
+                    "search_urls": ["http://a.com"],
+                },
+                {
+                    "estimated_value": 75.0,
+                    "currency": "USD",
+                    "reasoning": "Second item",
+                    "search_urls": ["http://b.com"],
+                },
+            ],
+        },
+    )
+
+    response = estimate_value(
+        image_uris=["gs://some_bucket/some_image.jpg"],
+        description="Multiple items in one image",
+        client=mock_genai_client,
+    )
+
+    assert len(response) == 2
+    assert response[0].estimated_value == 50.0
+    assert response[0].reasoning == "First item"
+    assert response[1].estimated_value == 75.0
+    assert response[1].reasoning == "Second item"
+    assert mock_models.generate_content.call_count == 2
 
 
 def test_estimate_value_multiple_image_uris_sends_multiple_parts(
@@ -233,7 +278,7 @@ def test_upload_image_to_gcs(mock_google_cloud_clients_and_app) -> None:
     mock_bucket.name = "test-bucket"
     mock_blob = mock_bucket.blob.return_value
 
-    with patch("server.STORAGE_BUCKET", "test-bucket"):
+    with patch("helpers.STORAGE_BUCKET", "test-bucket"):
         file_content = b"fake image content"
         mock_file = MagicMock()
         mock_file.filename = "test.jpg"
@@ -338,12 +383,14 @@ def test_value_endpoint_success_gbp(
     mock_google_cloud_clients_and_app,
 ) -> None:
     client, _, _ = mock_google_cloud_clients_and_app
-    mock_estimate_value.return_value = ValuationResponse(
-        estimated_value=123.45,
-        currency=Currency.GBP,
-        reasoning="Looks nice",
-        search_urls=["http://example.com"],
-    )
+    mock_estimate_value.return_value = [
+        ValuationResponse(
+            estimated_value=123.45,
+            currency=Currency.GBP,
+            reasoning="Looks nice",
+            search_urls=["http://example.com"],
+        ),
+    ]
     response = client.post(
         "/value",
         data={
@@ -358,12 +405,14 @@ def test_value_endpoint_success_gbp(
         "results": [
             {
                 "image_index": 0,
-                "valuation": {
-                    "estimated_value": 123.45,
-                    "currency": "GBP",
-                    "reasoning": "Looks nice",
-                    "search_urls": ["http://example.com"],
-                },
+                "valuations": [
+                    {
+                        "estimated_value": 123.45,
+                        "currency": "GBP",
+                        "reasoning": "Looks nice",
+                        "search_urls": ["http://example.com"],
+                    },
+                ],
             },
         ],
     }
@@ -382,12 +431,14 @@ def test_value_endpoint_success_image_url(
     mock_google_cloud_clients_and_app,
 ) -> None:
     client, _, _ = mock_google_cloud_clients_and_app
-    mock_estimate_value.return_value = ValuationResponse(
-        estimated_value=123.45,
-        currency=Currency.USD,
-        reasoning="Looks nice from URL",
-        search_urls=["http://example.com/url_image"],
-    )
+    mock_estimate_value.return_value = [
+        ValuationResponse(
+            estimated_value=123.45,
+            currency=Currency.USD,
+            reasoning="Looks nice from URL",
+            search_urls=["http://example.com/url_image"],
+        ),
+    ]
     response = client.post(
         "/value",
         data={
@@ -400,12 +451,14 @@ def test_value_endpoint_success_image_url(
         "results": [
             {
                 "image_index": 0,
-                "valuation": {
-                    "estimated_value": 123.45,
-                    "currency": "USD",
-                    "reasoning": "Looks nice from URL",
-                    "search_urls": ["http://example.com/url_image"],
-                },
+                "valuations": [
+                    {
+                        "estimated_value": 123.45,
+                        "currency": "USD",
+                        "reasoning": "Looks nice from URL",
+                        "search_urls": ["http://example.com/url_image"],
+                    },
+                ],
             },
         ],
     }
@@ -424,12 +477,14 @@ def test_value_endpoint_multiple_image_urls(
     mock_google_cloud_clients_and_app,
 ) -> None:
     client, _, _ = mock_google_cloud_clients_and_app
-    mock_estimate_value.return_value = ValuationResponse(
-        estimated_value=10.0,
-        currency=Currency.USD,
-        reasoning="Multiple URLs",
-        search_urls=[],
-    )
+    mock_estimate_value.return_value = [
+        ValuationResponse(
+            estimated_value=10.0,
+            currency=Currency.USD,
+            reasoning="Multiple URLs",
+            search_urls=[],
+        ),
+    ]
 
     response = client.post(
         "/value",
@@ -447,21 +502,25 @@ def test_value_endpoint_multiple_image_urls(
         "results": [
             {
                 "image_index": 0,
-                "valuation": {
-                    "estimated_value": 10.0,
-                    "currency": "USD",
-                    "reasoning": "Multiple URLs",
-                    "search_urls": [],
-                },
+                "valuations": [
+                    {
+                        "estimated_value": 10.0,
+                        "currency": "USD",
+                        "reasoning": "Multiple URLs",
+                        "search_urls": [],
+                    },
+                ],
             },
             {
                 "image_index": 1,
-                "valuation": {
-                    "estimated_value": 10.0,
-                    "currency": "USD",
-                    "reasoning": "Multiple URLs",
-                    "search_urls": [],
-                },
+                "valuations": [
+                    {
+                        "estimated_value": 10.0,
+                        "currency": "USD",
+                        "reasoning": "Multiple URLs",
+                        "search_urls": [],
+                    },
+                ],
             },
         ],
     }
@@ -488,12 +547,14 @@ def test_value_endpoint_multiple_image_datas(
     mock_google_cloud_clients_and_app,
 ) -> None:
     client, _, _ = mock_google_cloud_clients_and_app
-    mock_estimate_value.return_value = ValuationResponse(
-        estimated_value=11.0,
-        currency=Currency.USD,
-        reasoning="Multiple inline images",
-        search_urls=[],
-    )
+    mock_estimate_value.return_value = [
+        ValuationResponse(
+            estimated_value=11.0,
+            currency=Currency.USD,
+            reasoning="Multiple inline images",
+            search_urls=[],
+        ),
+    ]
 
     response = client.post(
         "/value",
@@ -512,21 +573,25 @@ def test_value_endpoint_multiple_image_datas(
         "results": [
             {
                 "image_index": 0,
-                "valuation": {
-                    "estimated_value": 11.0,
-                    "currency": "USD",
-                    "reasoning": "Multiple inline images",
-                    "search_urls": [],
-                },
+                "valuations": [
+                    {
+                        "estimated_value": 11.0,
+                        "currency": "USD",
+                        "reasoning": "Multiple inline images",
+                        "search_urls": [],
+                    },
+                ],
             },
             {
                 "image_index": 1,
-                "valuation": {
-                    "estimated_value": 11.0,
-                    "currency": "USD",
-                    "reasoning": "Multiple inline images",
-                    "search_urls": [],
-                },
+                "valuations": [
+                    {
+                        "estimated_value": 11.0,
+                        "currency": "USD",
+                        "reasoning": "Multiple inline images",
+                        "search_urls": [],
+                    },
+                ],
             },
         ],
     }
@@ -553,12 +618,14 @@ def test_value_endpoint_mixed_image_urls_and_datas(
     mock_google_cloud_clients_and_app,
 ) -> None:
     client, _, _ = mock_google_cloud_clients_and_app
-    mock_estimate_value.return_value = ValuationResponse(
-        estimated_value=12.0,
-        currency=Currency.USD,
-        reasoning="Mixed images",
-        search_urls=[],
-    )
+    mock_estimate_value.return_value = [
+        ValuationResponse(
+            estimated_value=12.0,
+            currency=Currency.USD,
+            reasoning="Mixed images",
+            search_urls=[],
+        ),
+    ]
 
     response = client.post(
         "/value",
@@ -575,21 +642,25 @@ def test_value_endpoint_mixed_image_urls_and_datas(
         "results": [
             {
                 "image_index": 0,
-                "valuation": {
-                    "estimated_value": 12.0,
-                    "currency": "USD",
-                    "reasoning": "Mixed images",
-                    "search_urls": [],
-                },
+                "valuations": [
+                    {
+                        "estimated_value": 12.0,
+                        "currency": "USD",
+                        "reasoning": "Mixed images",
+                        "search_urls": [],
+                    },
+                ],
             },
             {
                 "image_index": 1,
-                "valuation": {
-                    "estimated_value": 12.0,
-                    "currency": "USD",
-                    "reasoning": "Mixed images",
-                    "search_urls": [],
-                },
+                "valuations": [
+                    {
+                        "estimated_value": 12.0,
+                        "currency": "USD",
+                        "reasoning": "Mixed images",
+                        "search_urls": [],
+                    },
+                ],
             },
         ],
     }
@@ -616,12 +687,14 @@ def test_value_endpoint_uses_image_data_when_url_is_empty(
     mock_google_cloud_clients_and_app,
 ) -> None:
     client, _, _ = mock_google_cloud_clients_and_app
-    mock_estimate_value.return_value = ValuationResponse(
-        estimated_value=50.0,
-        currency=Currency.CAD,
-        reasoning="Data with empty URL",
-        search_urls=[],
-    )
+    mock_estimate_value.return_value = [
+        ValuationResponse(
+            estimated_value=50.0,
+            currency=Currency.CAD,
+            reasoning="Data with empty URL",
+            search_urls=[],
+        ),
+    ]
     response = client.post(
         "/value",
         data={
@@ -637,12 +710,14 @@ def test_value_endpoint_uses_image_data_when_url_is_empty(
         "results": [
             {
                 "image_index": 0,
-                "valuation": {
-                    "estimated_value": 50.0,
-                    "currency": "CAD",
-                    "reasoning": "Data with empty URL",
-                    "search_urls": [],
-                },
+                "valuations": [
+                    {
+                        "estimated_value": 50.0,
+                        "currency": "CAD",
+                        "reasoning": "Data with empty URL",
+                        "search_urls": [],
+                    },
+                ],
             },
         ],
     }
@@ -661,12 +736,14 @@ def test_value_endpoint_both_inputs_prioritizes_url(
     mock_google_cloud_clients_and_app,
 ) -> None:
     client, _, _ = mock_google_cloud_clients_and_app
-    mock_estimate_value.return_value = ValuationResponse(
-        estimated_value=200.0,
-        currency=Currency.JPY,
-        reasoning="URL should be prioritized",
-        search_urls=["http://example.com/both"],
-    )
+    mock_estimate_value.return_value = [
+        ValuationResponse(
+            estimated_value=200.0,
+            currency=Currency.JPY,
+            reasoning="URL should be prioritized",
+            search_urls=["http://example.com/both"],
+        ),
+    ]
     image_data_str = (
         "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
     )
@@ -685,21 +762,25 @@ def test_value_endpoint_both_inputs_prioritizes_url(
         "results": [
             {
                 "image_index": 0,
-                "valuation": {
-                    "estimated_value": 200.0,
-                    "currency": "JPY",
-                    "reasoning": "URL should be prioritized",
-                    "search_urls": ["http://example.com/both"],
-                },
+                "valuations": [
+                    {
+                        "estimated_value": 200.0,
+                        "currency": "JPY",
+                        "reasoning": "URL should be prioritized",
+                        "search_urls": ["http://example.com/both"],
+                    },
+                ],
             },
             {
                 "image_index": 1,
-                "valuation": {
-                    "estimated_value": 200.0,
-                    "currency": "JPY",
-                    "reasoning": "URL should be prioritized",
-                    "search_urls": ["http://example.com/both"],
-                },
+                "valuations": [
+                    {
+                        "estimated_value": 200.0,
+                        "currency": "JPY",
+                        "reasoning": "URL should be prioritized",
+                        "search_urls": ["http://example.com/both"],
+                    },
+                ],
             },
         ],
     }
@@ -720,6 +801,51 @@ def test_value_endpoint_both_inputs_prioritizes_url(
         ],
         currency=Currency.JPY,
     )
+
+
+@patch("server.estimate_value")
+def test_value_endpoint_one_image_two_valuations(
+    mock_estimate_value,
+    mock_google_cloud_clients_and_app,
+) -> None:
+    """One image can return multiple valuations (e.g. multiple items in one photo)."""
+    client, _, _ = mock_google_cloud_clients_and_app
+    mock_estimate_value.return_value = [
+        ValuationResponse(
+            estimated_value=30.0,
+            currency=Currency.USD,
+            reasoning="Item A",
+            search_urls=[],
+        ),
+        ValuationResponse(
+            estimated_value=45.0,
+            currency=Currency.USD,
+            reasoning="Item B",
+            search_urls=["http://example.com"],
+        ),
+    ]
+
+    response = client.post(
+        "/value",
+        data={
+            "description": "Two items in one image",
+            "image_datas": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
+            "content_types": "image/jpeg",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["results"]) == 1
+    assert data["results"][0]["image_index"] == 0
+    valuations = data["results"][0]["valuations"]
+    assert len(valuations) == 2
+    assert valuations[0]["estimated_value"] == 30.0
+    assert valuations[0]["reasoning"] == "Item A"
+    assert valuations[1]["estimated_value"] == 45.0
+    assert valuations[1]["reasoning"] == "Item B"
+    assert valuations[1]["search_urls"] == ["http://example.com"]
+    mock_estimate_value.assert_called_once()
 
 
 @patch("server.estimate_value")
@@ -797,10 +923,14 @@ def test_value_endpoint_integration_style(mock_google_cloud_clients_and_app) -> 
     mock_models = mock_genai_client.models
     mock_models.generate_content.side_effect = create_mock_gemini_responses(
         parsing_response_dict={
-            "estimated_value": 99.99,
-            "currency": "USD",
-            "reasoning": "Integration test success",
-            "search_urls": [],
+            "valuations": [
+                {
+                    "estimated_value": 99.99,
+                    "currency": "USD",
+                    "reasoning": "Integration test success",
+                    "search_urls": [],
+                },
+            ],
         },
     )
 
@@ -819,12 +949,14 @@ def test_value_endpoint_integration_style(mock_google_cloud_clients_and_app) -> 
         "results": [
             {
                 "image_index": 0,
-                "valuation": {
-                    "estimated_value": 99.99,
-                    "currency": "USD",
-                    "reasoning": "Integration test success",
-                    "search_urls": [],
-                },
+                "valuations": [
+                    {
+                        "estimated_value": 99.99,
+                        "currency": "USD",
+                        "reasoning": "Integration test success",
+                        "search_urls": [],
+                    },
+                ],
             },
         ],
     }
