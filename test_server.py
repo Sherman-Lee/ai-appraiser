@@ -44,7 +44,7 @@ def create_mock_gemini_responses(
     else:
         # Default successful parsing response (wrapper with valuations array)
         parsing_response = MagicMock(
-            text=f'{{"valuations": [{{"estimated_value": 100.0, "currency": "{DEFAULT_CURRENCY}", "reasoning": "Looks good", "search_urls": ["example.com"]}}]}}',
+            text=f'{{"valuations": [{{"item_name": "some_item", "estimated_value": 100.0, "currency": "{DEFAULT_CURRENCY}", "reasoning": "Looks good", "search_urls": ["example.com"]}}]}}',
         )
 
     return [valuation_mock, parsing_response]
@@ -71,6 +71,7 @@ def test_estimate_value_image_uri_success_eur(
         parsing_response_dict={
             "valuations": [
                 {
+                    "item_name": "some_item",
                     "estimated_value": 100.0,
                     "currency": "EUR",
                     "reasoning": "Looks good",
@@ -196,7 +197,7 @@ def test_estimate_value_invalid_estimated_value(
 ) -> None:
     _, _, mock_genai_client = mock_google_cloud_clients_and_app
     mock_genai_client.models.generate_content.side_effect = create_mock_gemini_responses(
-        parsing_response_text='{"valuations": [{"estimated_value": "not-a-number", "currency": "USD", "reasoning": "Looks good", "search_urls": ["example.com"]}]}',
+        parsing_response_text='{"valuations": [{"item_name": "some_item", "estimated_value": "not-a-number", "currency": "USD", "reasoning": "Looks good", "search_urls": ["example.com"]}]}',
     )
 
     with pytest.raises(ValidationError):
@@ -217,12 +218,14 @@ def test_estimate_value_returns_multiple_valuations(
         parsing_response_dict={
             "valuations": [
                 {
+                    "item_name": "some_item",
                     "estimated_value": 50.0,
                     "currency": "USD",
                     "reasoning": "First item",
                     "search_urls": ["http://a.com"],
                 },
                 {
+                    "item_name": "some_item",
                     "estimated_value": 75.0,
                     "currency": "USD",
                     "reasoning": "Second item",
@@ -385,6 +388,7 @@ def test_value_endpoint_success_gbp(
     client, _, _ = mock_google_cloud_clients_and_app
     mock_estimate_value.return_value = [
         ValuationResponse(
+            item_name="some_item",
             estimated_value=123.45,
             currency=Currency.GBP,
             reasoning="Looks nice",
@@ -407,6 +411,7 @@ def test_value_endpoint_success_gbp(
                 "image_index": 0,
                 "valuations": [
                     {
+                        "item_name": "some_item",
                         "estimated_value": 123.45,
                         "currency": "GBP",
                         "reasoning": "Looks nice",
@@ -433,6 +438,7 @@ def test_value_endpoint_success_image_url(
     client, _, _ = mock_google_cloud_clients_and_app
     mock_estimate_value.return_value = [
         ValuationResponse(
+            item_name="some_item",
             estimated_value=123.45,
             currency=Currency.USD,
             reasoning="Looks nice from URL",
@@ -453,6 +459,7 @@ def test_value_endpoint_success_image_url(
                 "image_index": 0,
                 "valuations": [
                     {
+                        "item_name": "some_item",
                         "estimated_value": 123.45,
                         "currency": "USD",
                         "reasoning": "Looks nice from URL",
@@ -479,6 +486,7 @@ def test_value_endpoint_multiple_image_urls(
     client, _, _ = mock_google_cloud_clients_and_app
     mock_estimate_value.return_value = [
         ValuationResponse(
+            item_name="some_item",
             estimated_value=10.0,
             currency=Currency.USD,
             reasoning="Multiple URLs",
@@ -504,6 +512,7 @@ def test_value_endpoint_multiple_image_urls(
                 "image_index": 0,
                 "valuations": [
                     {
+                        "item_name": "some_item",
                         "estimated_value": 10.0,
                         "currency": "USD",
                         "reasoning": "Multiple URLs",
@@ -515,6 +524,7 @@ def test_value_endpoint_multiple_image_urls(
                 "image_index": 1,
                 "valuations": [
                     {
+                        "item_name": "some_item",
                         "estimated_value": 10.0,
                         "currency": "USD",
                         "reasoning": "Multiple URLs",
@@ -549,6 +559,7 @@ def test_value_endpoint_multiple_image_datas(
     client, _, _ = mock_google_cloud_clients_and_app
     mock_estimate_value.return_value = [
         ValuationResponse(
+            item_name="some_item",
             estimated_value=11.0,
             currency=Currency.USD,
             reasoning="Multiple inline images",
@@ -575,6 +586,7 @@ def test_value_endpoint_multiple_image_datas(
                 "image_index": 0,
                 "valuations": [
                     {
+                        "item_name": "some_item",
                         "estimated_value": 11.0,
                         "currency": "USD",
                         "reasoning": "Multiple inline images",
@@ -586,6 +598,7 @@ def test_value_endpoint_multiple_image_datas(
                 "image_index": 1,
                 "valuations": [
                     {
+                        "item_name": "some_item",
                         "estimated_value": 11.0,
                         "currency": "USD",
                         "reasoning": "Multiple inline images",
@@ -620,6 +633,7 @@ def test_value_endpoint_mixed_image_urls_and_datas(
     client, _, _ = mock_google_cloud_clients_and_app
     mock_estimate_value.return_value = [
         ValuationResponse(
+            item_name="some_item",
             estimated_value=12.0,
             currency=Currency.USD,
             reasoning="Mixed images",
@@ -644,6 +658,7 @@ def test_value_endpoint_mixed_image_urls_and_datas(
                 "image_index": 0,
                 "valuations": [
                     {
+                        "item_name": "some_item",
                         "estimated_value": 12.0,
                         "currency": "USD",
                         "reasoning": "Mixed images",
@@ -655,6 +670,7 @@ def test_value_endpoint_mixed_image_urls_and_datas(
                 "image_index": 1,
                 "valuations": [
                     {
+                        "item_name": "some_item",
                         "estimated_value": 12.0,
                         "currency": "USD",
                         "reasoning": "Mixed images",
@@ -689,6 +705,7 @@ def test_value_endpoint_uses_image_data_when_url_is_empty(
     client, _, _ = mock_google_cloud_clients_and_app
     mock_estimate_value.return_value = [
         ValuationResponse(
+            item_name="some_item",
             estimated_value=50.0,
             currency=Currency.CAD,
             reasoning="Data with empty URL",
@@ -712,6 +729,7 @@ def test_value_endpoint_uses_image_data_when_url_is_empty(
                 "image_index": 0,
                 "valuations": [
                     {
+                        "item_name": "some_item",
                         "estimated_value": 50.0,
                         "currency": "CAD",
                         "reasoning": "Data with empty URL",
@@ -738,6 +756,7 @@ def test_value_endpoint_both_inputs_prioritizes_url(
     client, _, _ = mock_google_cloud_clients_and_app
     mock_estimate_value.return_value = [
         ValuationResponse(
+            item_name="some_item",
             estimated_value=200.0,
             currency=Currency.JPY,
             reasoning="URL should be prioritized",
@@ -764,6 +783,7 @@ def test_value_endpoint_both_inputs_prioritizes_url(
                 "image_index": 0,
                 "valuations": [
                     {
+                        "item_name": "some_item",
                         "estimated_value": 200.0,
                         "currency": "JPY",
                         "reasoning": "URL should be prioritized",
@@ -775,6 +795,7 @@ def test_value_endpoint_both_inputs_prioritizes_url(
                 "image_index": 1,
                 "valuations": [
                     {
+                        "item_name": "some_item",
                         "estimated_value": 200.0,
                         "currency": "JPY",
                         "reasoning": "URL should be prioritized",
@@ -812,12 +833,14 @@ def test_value_endpoint_one_image_two_valuations(
     client, _, _ = mock_google_cloud_clients_and_app
     mock_estimate_value.return_value = [
         ValuationResponse(
+            item_name="some_item",
             estimated_value=30.0,
             currency=Currency.USD,
             reasoning="Item A",
             search_urls=[],
         ),
         ValuationResponse(
+            item_name="some_item",
             estimated_value=45.0,
             currency=Currency.USD,
             reasoning="Item B",
@@ -925,6 +948,7 @@ def test_value_endpoint_integration_style(mock_google_cloud_clients_and_app) -> 
         parsing_response_dict={
             "valuations": [
                 {
+                    "item_name": "some_item",
                     "estimated_value": 99.99,
                     "currency": "USD",
                     "reasoning": "Integration test success",
@@ -951,6 +975,7 @@ def test_value_endpoint_integration_style(mock_google_cloud_clients_and_app) -> 
                 "image_index": 0,
                 "valuations": [
                     {
+                        "item_name": "some_item",
                         "estimated_value": 99.99,
                         "currency": "USD",
                         "reasoning": "Integration test success",
