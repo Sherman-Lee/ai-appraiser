@@ -147,7 +147,7 @@ document
                     : `<div class="text-xs text-gray-400 px-2 text-center">No preview</div>`
                 }
               </div>
-              <div class="min-w-0 flex-1">
+              <div class="min-w-0 flex-1 break-words">
                 <p class="font-semibold text-gray-800">Image ${imageIndex + 1}</p>`;
 
         valuations.forEach((data, vIdx) => {
@@ -174,7 +174,7 @@ document
                     <p class="font-medium text-gray-700 text-sm">Reference links</p>
                     <ul class="text-sm list-disc list-inside ml-4 mt-1">`;
             data.search_urls.forEach((url) => {
-              resultsHTML += `<li><a href="${url}" target="_blank" rel="noopener noreferrer" class="text-primary-600 hover:underline">${url}</a></li>`;
+              resultsHTML += `<li class="break-all"><a href="${url}" target="_blank" rel="noopener noreferrer" class="text-primary-600 hover:underline break-all">${url}</a></li>`;
             });
             resultsHTML += `</ul></div>`;
           }
