@@ -42,6 +42,10 @@ app = FastAPI(
 )
 
 
+# Serve static files (e.g. script.js) from the same directory as server.py
+app.mount("/static", StaticFiles(directory=pathlib.Path(__file__).parent), name="static")
+
+
 # --- Dependencies ---
 def get_storage_client(request: Request) -> storage.Client:
     return request.app.state.storage_client
@@ -218,10 +222,6 @@ async def estimate_item_value(
             status_code=500,
             detail="An internal error occurred during valuation.",
         )
-
-
-# Serve static files (e.g. script.js) from the same directory as server.py
-app.mount("/static", StaticFiles(directory=pathlib.Path(__file__).parent), name="static")
 
 
 @app.get("/", response_class=HTMLResponse)
