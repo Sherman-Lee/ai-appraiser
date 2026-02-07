@@ -1,5 +1,8 @@
 let uploadedImages = [];
 
+const RESULTS_EMPTY_HTML =
+  '<p id="results-empty-message" class="text-gray-500 text-sm">Your estimates will appear here after you add photos and click Get estimates.</p>';
+
 function setUploadError(message) {
   const el = document.getElementById("upload-error");
   if (!message) {
@@ -9,6 +12,23 @@ function setUploadError(message) {
   }
   el.textContent = message;
   el.classList.remove("hidden");
+}
+
+function setSubmitError(message) {
+  const el = document.getElementById("submit-error");
+  if (!el) return;
+  if (!message) {
+    el.classList.add("hidden");
+    el.textContent = "";
+    return;
+  }
+  el.textContent = message;
+  el.classList.remove("hidden");
+}
+
+function updateEstimateButtonState() {
+  const btn = document.getElementById("estimate-value-button");
+  if (btn) btn.disabled = uploadedImages.length === 0;
 }
 
 function createHiddenInput(name, value) {
@@ -22,18 +42,23 @@ function createHiddenInput(name, value) {
 function renderUploadedImages() {
   const empty = document.getElementById("image-preview-empty");
   const grid = document.getElementById("image-preview-grid");
+  const addMore = document.getElementById("add-more-photos");
   const hidden = document.getElementById("image-hidden-fields");
 
   grid.innerHTML = "";
   hidden.innerHTML = "";
   setUploadError(null);
+  setSubmitError(null);
+  updateEstimateButtonState();
 
   if (uploadedImages.length === 0) {
-    empty.classList.remove("hidden");
+    if (empty) empty.classList.remove("hidden");
+    if (addMore) addMore.classList.add("hidden");
     return;
   }
 
-  empty.classList.add("hidden");
+  if (empty) empty.classList.add("hidden");
+  if (addMore) addMore.classList.remove("hidden");
 
   uploadedImages.forEach((img, idx) => {
     const card = document.createElement("div");
@@ -113,9 +138,9 @@ document
           : null;
 
         resultsHTML += `
-          <div class="bg-white p-4 rounded-lg shadow-md">
+          <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
             <div class="flex gap-4">
-              <div class="w-24 h-24 shrink-0 border border-gray-200 rounded bg-white overflow-hidden flex items-center justify-center">
+              <div class="w-24 h-24 shrink-0 border border-gray-200 rounded-lg bg-white overflow-hidden flex items-center justify-center">
                 ${
                   thumb
                     ? `<img src="${thumb}" alt="Image ${imageIndex + 1}" class="w-full h-full object-contain" />`
@@ -123,7 +148,7 @@ document
                 }
               </div>
               <div class="min-w-0 flex-1">
-                <p class="font-semibold">Image ${imageIndex + 1}</p>`;
+                <p class="font-semibold text-gray-800">Image ${imageIndex + 1}</p>`;
 
         valuations.forEach((data, vIdx) => {
           const formattedValue = formatCurrency(
@@ -134,10 +159,10 @@ document
             valuations.length > 1 ? `Item ${vIdx + 1}: ` : "";
           resultsHTML += `
                 <div class="mt-3 ${vIdx > 0 ? "pt-3 border-t border-gray-200" : ""}">
-                  <p class="font-semibold mt-2">${itemLabel}Estimated Value:</p>
-                  <p class="text-2xl text-blue-600">${formattedValue}</p>
-                  <p class="font-semibold mt-3">Reasoning:</p>
-                  <p class="text-sm text-gray-700">${data.reasoning}</p>`;
+                  <p class="text-xs text-gray-500 mt-2">${itemLabel}Estimated value</p>
+                  <p class="text-3xl font-semibold text-primary-600 mt-0.5">${formattedValue}</p>
+                  <p class="font-medium text-gray-700 mt-3 text-sm">How we estimated</p>
+                  <p class="text-sm text-gray-600">${data.reasoning}</p>`;
 
           if (
             data.search_urls &&
@@ -146,10 +171,10 @@ document
           ) {
             resultsHTML += `
                   <div class="mt-3">
-                    <p class="font-semibold">Sources:</p>
-                    <ul class="text-sm list-disc list-inside ml-4">`;
+                    <p class="font-medium text-gray-700 text-sm">Reference links</p>
+                    <ul class="text-sm list-disc list-inside ml-4 mt-1">`;
             data.search_urls.forEach((url) => {
-              resultsHTML += `<li><a href="${url}" target="_blank" class="text-blue-600 hover:underline">${url}</a></li>`;
+              resultsHTML += `<li><a href="${url}" target="_blank" rel="noopener noreferrer" class="text-primary-600 hover:underline">${url}</a></li>`;
             });
             resultsHTML += `</ul></div>`;
           }
@@ -203,20 +228,13 @@ async function uploadOneFile(file) {
   return await resp.json();
 }
 
-document.getElementById("image_file").addEventListener("change", async (evt) => {
-  const input = evt.target;
-  if (!(input instanceof HTMLInputElement)) return;
-  const files = input.files ? Array.from(input.files) : [];
-  if (files.length === 0) return;
-
+async function processFiles(files, input) {
+  if (!files || files.length === 0) return;
   setUploadError(null);
-  input.disabled = true;
-
+  if (input) input.disabled = true;
   try {
     for (const file of files) {
-      if (!file.type.startsWith("image/")) {
-        continue;
-      }
+      if (!file.type.startsWith("image/")) continue;
       const data = await uploadOneFile(file);
       if (data && data.data_url) {
         uploadedImages.push({
@@ -230,10 +248,62 @@ document.getElementById("image_file").addEventListener("change", async (evt) => 
   } catch (e) {
     setUploadError(e instanceof Error ? e.message : String(e));
   } finally {
-    input.value = "";
-    input.disabled = false;
+    if (input) {
+      input.value = "";
+      input.disabled = false;
+    }
   }
-});
+}
+
+const imageFileInput = document.getElementById("image_file");
+const imageFileAddInput = document.getElementById("image_file_add");
+const emptyDropzone = document.getElementById("image-preview-empty");
+
+if (emptyDropzone && imageFileInput) {
+  emptyDropzone.addEventListener("click", function (e) {
+    if (e.target === imageFileInput) return;
+    imageFileInput.click();
+  });
+  emptyDropzone.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      imageFileInput.click();
+    }
+  });
+  emptyDropzone.addEventListener("dragover", function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    emptyDropzone.classList.add("border-primary-600", "bg-gray-50");
+  });
+  emptyDropzone.addEventListener("dragleave", function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    emptyDropzone.classList.remove("border-primary-600", "bg-gray-50");
+  });
+  emptyDropzone.addEventListener("drop", function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    emptyDropzone.classList.remove("border-primary-600", "bg-gray-50");
+    const files = e.dataTransfer && e.dataTransfer.files ? Array.from(e.dataTransfer.files) : [];
+    processFiles(files, null);
+  });
+}
+
+if (imageFileInput) {
+  imageFileInput.addEventListener("change", async (evt) => {
+    const input = evt.target;
+    if (!(input instanceof HTMLInputElement)) return;
+    await processFiles(Array.from(input.files || []), input);
+  });
+}
+
+if (imageFileAddInput) {
+  imageFileAddInput.addEventListener("change", async (evt) => {
+    const input = evt.target;
+    if (!(input instanceof HTMLInputElement)) return;
+    await processFiles(Array.from(input.files || []), input);
+  });
+}
 
 const estimateValueButton = document.getElementById(
   "estimate-value-button"
@@ -241,8 +311,10 @@ const estimateValueButton = document.getElementById(
 if (estimateValueButton) {
   estimateValueButton.addEventListener("click", function (event) {
     if (uploadedImages.length === 0) {
-      alert("Please upload at least one image first.");
+      setSubmitError("Please add at least one photo first.");
       event.preventDefault();
+    } else {
+      setSubmitError(null);
     }
   });
 }
@@ -257,8 +329,9 @@ if (resetButton) {
     uploadedImages = [];
     renderUploadedImages();
 
-    // Clear valuation results
-    document.getElementById("results").innerHTML = "";
+    // Clear valuation results and show empty state
+    const resultsEl = document.getElementById("results");
+    if (resultsEl) resultsEl.innerHTML = RESULTS_EMPTY_HTML;
 
     // Reset the currency selection
     document.getElementById("currency").value = defaultCurrency;
@@ -267,3 +340,4 @@ if (resetButton) {
 
 // Initialize UI
 renderUploadedImages();
+updateEstimateButtonState();
