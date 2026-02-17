@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -12,7 +13,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from google import genai
 from google.cloud import storage
-from typing_extensions import Annotated
+from typing_extensions import Annotated, Dict, Any
+from uuid import uuid4
+import time
 
 from data_model import Currency, ValuationPerImage, MultiValuationResponse
 from env_config import PROJECT_ID, LOCATION, STORAGE_BUCKET, DEFAULT_CURRENCY
@@ -91,6 +94,17 @@ async def upload_image(
         )
 
 
+# In-memory storage for task progress (use Redis in production)
+task_progress: Dict[str, Dict[str, Any]] = {}
+
+@app.get("/progress/{task_id}")
+async def get_progress(task_id: str):
+    """Retrieve progress for a valuation task."""
+    if task_id not in task_progress:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return JSONResponse(content=task_progress[task_id])
+
+
 @app.post("/value", response_model=MultiValuationResponse)
 async def estimate_item_value(
     description: Annotated[str, Form()],
@@ -102,6 +116,7 @@ async def estimate_item_value(
     image_data: Annotated[str | None, Form()] = None,
     content_type: Annotated[str | None, Form()] = None,
     currency: Annotated[Currency, Form()] = Currency(DEFAULT_CURRENCY),
+    task_id: Annotated[str | None, Form()] = None,
     client: genai.Client = Depends(get_genai_client),
 ):
     """Estimates the value of an item based on an image and text input."""
@@ -158,8 +173,19 @@ async def estimate_item_value(
                     },
                 )
 
+        # Use provided task_id or generate a new one
+        if not task_id:
+            task_id = str(uuid4())
+        total_images = len(normalized_items)
+        task_progress[task_id] = {
+            "total": total_images,
+            "completed": 0,
+            "status": "processing",
+        }
+
         results: list[ValuationPerImage] = []
         for idx, item in enumerate(normalized_items):
+
             kind = item.get("kind")
             if kind == "gcs":
                 gcs_uri = item.get("gcs_uri")
@@ -211,9 +237,21 @@ async def estimate_item_value(
                 )
 
             results.append(ValuationPerImage(image_index=idx, valuations=valuations))
+            
+            # Update progress after processing each image
+            task_progress[task_id]["completed"] = idx + 1
+            task_progress[task_id]["status"] = "processing"
+            
+            # Small delay to allow progress polling to catch up
+            await asyncio.sleep(0.1)
+
+        # Finalize task
+        task_progress[task_id]["status"] = "completed"
 
         response_data = MultiValuationResponse(results=results)
-        return JSONResponse(content=response_data.model_dump())
+        response = JSONResponse(content=response_data.model_dump())
+        response.headers["X-Task-ID"] = task_id
+        return response
     except HTTPException:
         raise
     except Exception:

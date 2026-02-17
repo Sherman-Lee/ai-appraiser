@@ -91,16 +91,94 @@ function renderUploadedImages() {
   });
 }
 
+// Generate a unique task ID function
+function generateTaskId() {
+  return 'task_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+}
+
 document
   .getElementById("valuation-form")
-  .addEventListener("htmx:beforeRequest", function () {
-    document.getElementById("spinner").classList.remove("hidden");
+  .addEventListener("htmx:beforeRequest", function (evt) {
+    // Generate task ID on client side before request
+    const taskId = generateTaskId();
+    
+    // Add task_id as a hidden form field
+    const form = evt.target;
+    let taskIdInput = form.querySelector('input[name="task_id"]');
+    if (!taskIdInput) {
+      taskIdInput = createHiddenInput("task_id", taskId);
+      form.appendChild(taskIdInput);
+    } else {
+      taskIdInput.value = taskId;
+    }
+
+    // Function to start polling progress
+    function startProgressPolling(taskId) {
+      const progressContainer = document.getElementById("progress-container");
+      const spinner = document.getElementById("spinner");
+      
+      // Show progress container and spinner
+      progressContainer.classList.remove("hidden");
+      spinner.classList.remove("hidden");
+      
+      // Initialize progress display
+      const totalImages = uploadedImages.length;
+      progressContainer.textContent = `0/${totalImages} images appraised`;
+
+      const poll = () => {
+        fetch(`/progress/${taskId}`)
+          .then(response => {
+            if (!response.ok) {
+              // Task might not exist yet, keep polling
+              if (response.status === 404) {
+                setTimeout(poll, 500);
+                return null;
+              }
+              throw new Error("Network response was not ok");
+            }
+            return response.json();
+          })
+          .then(data => {
+            if (!data) return; // 404 case, already scheduled next poll
+            
+            // Update progress message
+            const completed = data.completed || 0;
+            const total = data.total || 0;
+            progressContainer.textContent = `${completed}/${total} images appraised`;
+
+            // Check if task is complete
+            if (data.status === "completed") {
+              // Don't hide spinner here - let afterRequest handle it
+              return;
+            }
+
+            // Poll again after a short delay
+            setTimeout(poll, 500);
+          })
+          .catch(error => {
+            console.error("Error fetching progress:", error);
+            // Don't stop polling on error, just log it
+            setTimeout(poll, 1000);
+          });
+      };
+
+      // Start polling immediately
+      poll();
+    }
+
+    // Start polling with the generated task ID
+    startProgressPolling(taskId);
   });
 
 document
   .getElementById("valuation-form")
   .addEventListener("htmx:afterRequest", function (evt) {
-    document.getElementById("spinner").classList.add("hidden");
+    // Hide spinner and progress container
+    const spinner = document.getElementById("spinner");
+    const progressContainer = document.getElementById("progress-container");
+    if (spinner) spinner.classList.add("hidden");
+    if (progressContainer) progressContainer.classList.add("hidden");
+    
     if (evt.detail.successful) {
       const payload = JSON.parse(evt.detail.xhr.response);
 
