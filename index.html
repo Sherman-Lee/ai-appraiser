@@ -148,7 +148,16 @@
 
           <div class="order-2">
             <div class="bg-gray-50/80 p-6 rounded-xl border border-gray-200/60 h-full flex flex-col">
-              <h2 class="text-lg font-semibold text-gray-700 mb-1">Your appraisal results</h2>
+              <div class="flex items-center justify-between mb-1">
+                <h2 class="text-lg font-semibold text-gray-700">Your appraisal results</h2>
+                <button
+                  type="button"
+                  id="download-csv-button"
+                  class="hidden text-gray-600 hover:text-gray-800 font-medium py-1.5 px-3 rounded-lg border border-gray-300 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-400/50 transition text-sm"
+                >
+                  Download CSV
+                </button>
+              </div>
               <div
                 id="results-container"
                 class="relative flex-1 min-h-[280px] rounded-lg bg-white/60 border border-gray-200/60"

@@ -4,12 +4,19 @@ from google import genai
 from google.genai.types import GenerateContentConfig, GoogleSearch, Part, Tool
 from werkzeug.utils import secure_filename
 from mimetypes import guess_type
-
+from io import BytesIO
 
 import base64
 import datetime
 import json
 import logging
+
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    logging.warning("Pillow not available, image compression disabled")
 
 from data_model import Currency, ValuationParsingResult, ValuationResponse
 from env_config import STORAGE_BUCKET, GCS_FILENAME_MAX_LEN, DEFAULT_CURRENCY, MODEL_ID
@@ -40,10 +47,70 @@ def upload_image_to_gcs(file: UploadFile, storage_client: storage.Client) -> str
         raise
 
 
-def get_data_url(file: UploadFile, contents: bytes) -> str:
-    """Creates a data URL for the image."""
-    encoded_image = base64.b64encode(contents).decode("utf-8")
-    return f"data:{file.content_type};base64,{encoded_image}"
+def compress_image_for_preview(contents: bytes, content_type: str, max_size: int = 800, quality: int = 85) -> tuple[bytes, str]:
+    """
+    Compress an image for preview thumbnail while maintaining aspect ratio.
+    Returns (compressed_bytes, mime_type).
+    Falls back to original if compression fails or PIL is unavailable.
+    """
+    if not PIL_AVAILABLE:
+        return contents, content_type
+    
+    try:
+        # Open image from bytes
+        img = Image.open(BytesIO(contents))
+        
+        # Convert RGBA to RGB if needed (for JPEG compatibility)
+        if img.mode in ("RGBA", "LA", "P"):
+            # Create white background for transparency
+            rgb_img = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            rgb_img.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+            img = rgb_img
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+        
+        # Calculate new dimensions maintaining aspect ratio
+        width, height = img.size
+        if width <= max_size and height <= max_size:
+            # Image is already small enough, but still compress for size reduction
+            pass
+        else:
+            # Resize maintaining aspect ratio
+            if width > height:
+                new_width = max_size
+                new_height = int(height * (max_size / width))
+            else:
+                new_height = max_size
+                new_width = int(width * (max_size / height))
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        # Save compressed image to bytes
+        output = BytesIO()
+        # Use JPEG for compressed output (smaller file size)
+        img.save(output, format="JPEG", quality=quality, optimize=True)
+        compressed_bytes = output.getvalue()
+        
+        return compressed_bytes, "image/jpeg"
+    except Exception as e:
+        logging.warning(f"Failed to compress image for preview: {e}, using original")
+        return contents, content_type
+
+
+def get_data_url(file: UploadFile, contents: bytes, compress: bool = True) -> str:
+    """
+    Creates a data URL for the image preview.
+    If compress=True, compresses the image for smaller preview size.
+    Original image is still uploaded to GCS for full-quality valuation.
+    """
+    if compress:
+        compressed_contents, mime_type = compress_image_for_preview(contents, file.content_type)
+        encoded_image = base64.b64encode(compressed_contents).decode("utf-8")
+        return f"data:{mime_type};base64,{encoded_image}"
+    else:
+        encoded_image = base64.b64encode(contents).decode("utf-8")
+        return f"data:{file.content_type};base64,{encoded_image}"
 
 
 def estimate_value(

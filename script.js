@@ -1,4 +1,6 @@
 let uploadedImages = [];
+let progressPollingActive = false;
+let currentValuationData = null;
 
 const RESULTS_EMPTY_HTML =
   '<p id="results-empty-message" class="text-gray-500 text-sm">Your estimates will appear here after you add photos and click Get estimates.</p>';
@@ -29,6 +31,117 @@ function setSubmitError(message) {
 function updateEstimateButtonState() {
   const btn = document.getElementById("estimate-value-button");
   if (btn) btn.disabled = uploadedImages.length === 0;
+}
+
+function updateExportButtonVisibility() {
+  const btn = document.getElementById("download-csv-button");
+  if (btn) {
+    if (currentValuationData && currentValuationData.length > 0) {
+      btn.classList.remove("hidden");
+    } else {
+      btn.classList.add("hidden");
+    }
+  }
+}
+
+function escapeCSVField(field) {
+  if (field === null || field === undefined) {
+    return "";
+  }
+  const str = String(field);
+  // If field contains comma, quote, or newline, wrap in quotes and escape quotes
+  if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+    return '"' + str.replace(/"/g, '""') + '"';
+  }
+  return str;
+}
+
+function exportToCSV() {
+  if (!currentValuationData || currentValuationData.length === 0) {
+    setSubmitError("No valuation results available to export.");
+    return;
+  }
+
+  // Flatten all ValuationResponse objects from all images
+  const rows = [];
+  currentValuationData.forEach((entry) => {
+    const imageIndex =
+      entry && typeof entry.image_index === "number" ? entry.image_index : 0;
+    const valuations = Array.isArray(entry.valuations)
+      ? entry.valuations
+      : entry.valuation
+        ? [entry.valuation]
+        : [];
+
+    valuations.forEach((valuation) => {
+      // Format search_urls array as semicolon-separated string
+      const searchUrlsStr =
+        valuation.search_urls && Array.isArray(valuation.search_urls)
+          ? valuation.search_urls
+              .filter((url) => url && url !== "N/A")
+              .join("; ")
+          : "";
+
+      rows.push({
+        image_index: imageIndex,
+        item_name: valuation.item_name || "",
+        estimated_value: valuation.estimated_value || 0,
+        currency: valuation.currency || "",
+        reasoning: valuation.reasoning || "",
+        search_urls: searchUrlsStr,
+      });
+    });
+  });
+
+  if (rows.length === 0) {
+    setSubmitError("No valuation data to export.");
+    return;
+  }
+
+  // Create CSV header
+  const headers = [
+    "image_index",
+    "item_name",
+    "estimated_value",
+    "currency",
+    "reasoning",
+    "search_urls",
+  ];
+
+  // Build CSV content
+  const csvRows = [headers.map(escapeCSVField).join(",")];
+
+  rows.forEach((row) => {
+    const csvRow = headers.map((header) => escapeCSVField(row[header]));
+    csvRows.push(csvRow.join(","));
+  });
+
+  const csvContent = csvRows.join("\n");
+
+  // Create blob with UTF-8 BOM for Excel compatibility
+  const BOM = "\uFEFF";
+  const blob = new Blob([BOM + csvContent], { type: "text/csv;charset=utf-8;" });
+
+  // Create download link and trigger download
+  const link = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  link.setAttribute("href", url);
+
+  // Generate filename with timestamp
+  const now = new Date();
+  const timestamp = now
+    .toISOString()
+    .replace(/[:.]/g, "-")
+    .slice(0, -5);
+  link.setAttribute("download", `valuations_${timestamp}.csv`);
+
+  link.style.visibility = "hidden";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  // Clear any previous errors
+  setSubmitError(null);
 }
 
 function createHiddenInput(name, value) {
@@ -126,11 +239,15 @@ document
       progressContainer.textContent = `0/${totalImages} images appraised`;
 
       const poll = () => {
+        // If polling has been deactivated (e.g., request finished), stop immediately
+        if (!progressPollingActive) return;
+
         fetch(`/progress/${taskId}`)
           .then(response => {
             if (!response.ok) {
               // Task might not exist yet, keep polling
               if (response.status === 404) {
+                if (!progressPollingActive) return;
                 setTimeout(poll, 500);
                 return null;
               }
@@ -148,21 +265,25 @@ document
 
             // Check if task is complete
             if (data.status === "completed") {
-              // Don't hide spinner here - let afterRequest handle it
+              // Stop polling; afterRequest will hide spinner
+              progressPollingActive = false;
               return;
             }
 
             // Poll again after a short delay
+            if (!progressPollingActive) return;
             setTimeout(poll, 500);
           })
           .catch(error => {
             console.error("Error fetching progress:", error);
             // Don't stop polling on error, just log it
+            if (!progressPollingActive) return;
             setTimeout(poll, 1000);
           });
       };
 
-      // Start polling immediately
+      // Mark polling as active and start immediately
+      progressPollingActive = true;
       poll();
     }
 
@@ -173,6 +294,9 @@ document
 document
   .getElementById("valuation-form")
   .addEventListener("htmx:afterRequest", function (evt) {
+    // Stop any ongoing progress polling
+    progressPollingActive = false;
+
     // Hide spinner and progress container
     const spinner = document.getElementById("spinner");
     const progressContainer = document.getElementById("progress-container");
@@ -180,7 +304,16 @@ document
     if (progressContainer) progressContainer.classList.add("hidden");
     
     if (evt.detail.successful) {
-      const payload = JSON.parse(evt.detail.xhr.response);
+      let payload;
+      try {
+        payload = JSON.parse(evt.detail.xhr.response);
+      } catch (e) {
+        // If we can't parse JSON, show a generic error and bail
+        setSubmitError("Received an unexpected response from the server while getting appraisal results.");
+        currentValuationData = null;
+        updateExportButtonVisibility();
+        return;
+      }
 
       // Format the currency
       function formatCurrency(value, currency) {
@@ -197,6 +330,10 @@ document
         // Back-compat: if server returns a single ValuationResponse object.
         results = [{ image_index: 0, valuation: payload }];
       }
+
+      // Store current valuation data for CSV export
+      currentValuationData = results;
+      updateExportButtonVisibility();
 
       let resultsHTML = `<div class="space-y-4">`;
 
@@ -274,6 +411,23 @@ document
 
       resultsHTML += `</div>`;
       document.getElementById("results").innerHTML = resultsHTML;
+      // Clear any previous submit error on success
+      setSubmitError(null);
+      updateExportButtonVisibility();
+    } else {
+      // Handle failed request: surface error to the user if possible
+      let message = "An error occurred while getting appraisal results.";
+      try {
+        const body = JSON.parse(evt.detail.xhr.response);
+        if (body && body.detail) {
+          message = body.detail;
+        }
+      } catch {
+        // ignore JSON parse errors and keep generic message
+      }
+      setSubmitError(message);
+      currentValuationData = null;
+      updateExportButtonVisibility();
     }
   });
 
@@ -318,17 +472,49 @@ async function processFiles(files, input) {
   setUploadError(null);
   if (input) input.disabled = true;
   try {
-    for (const file of files) {
-      if (!file.type.startsWith("image/")) continue;
-      const data = await uploadOneFile(file);
-      if (data && data.data_url) {
+    // Filter image files and create upload promises for parallel execution
+    const imageFiles = Array.from(files).filter(file => file.type.startsWith("image/"));
+    
+    if (imageFiles.length === 0) {
+      return;
+    }
+
+    // Upload all images in parallel
+    const uploadPromises = imageFiles.map(file => 
+      uploadOneFile(file).catch(error => {
+        // Return error info instead of throwing to allow partial success
+        return { error: error instanceof Error ? error.message : String(error), file: file.name };
+      })
+    );
+    
+    const results = await Promise.all(uploadPromises);
+    
+    // Process successful uploads and collect errors
+    const errors = [];
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      if (result.error) {
+        errors.push(`${result.file}: ${result.error}`);
+      } else if (result && result.data_url) {
         uploadedImages.push({
-          dataUrl: data.data_url,
-          gcsUri: data.gcs_uri,
-          contentType: data.content_type,
+          dataUrl: result.data_url,
+          gcsUri: result.gcs_uri,
+          contentType: result.content_type,
         });
-        renderUploadedImages();
       }
+    }
+    
+    // Render once after all uploads complete
+    if (uploadedImages.length > 0) {
+      renderUploadedImages();
+    }
+    
+    // Show errors if any occurred (but allow partial success)
+    if (errors.length > 0) {
+      const errorMsg = errors.length === imageFiles.length
+        ? `Failed to upload images: ${errors.join("; ")}`
+        : `Some images failed to upload: ${errors.join("; ")}`;
+      setUploadError(errorMsg);
     }
   } catch (e) {
     setUploadError(e instanceof Error ? e.message : String(e));
@@ -420,9 +606,21 @@ if (resetButton) {
 
     // Reset the currency selection
     document.getElementById("currency").value = defaultCurrency;
+
+    // Clear valuation data and hide export button
+    currentValuationData = null;
+    updateExportButtonVisibility();
+  });
+}
+
+const downloadCsvButton = document.getElementById("download-csv-button");
+if (downloadCsvButton) {
+  downloadCsvButton.addEventListener("click", function () {
+    exportToCSV();
   });
 }
 
 // Initialize UI
 renderUploadedImages();
 updateEstimateButtonState();
+updateExportButtonVisibility();

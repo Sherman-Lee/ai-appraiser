@@ -96,6 +96,15 @@ async def upload_image(
 
 # In-memory storage for task progress (use Redis in production)
 task_progress: Dict[str, Dict[str, Any]] = {}
+# Lock for thread-safe progress updates (initialized on first use)
+_progress_lock: asyncio.Lock | None = None
+
+def get_progress_lock() -> asyncio.Lock:
+    """Get or create the progress lock."""
+    global _progress_lock
+    if _progress_lock is None:
+        _progress_lock = asyncio.Lock()
+    return _progress_lock
 
 @app.get("/progress/{task_id}")
 async def get_progress(task_id: str):
@@ -132,11 +141,25 @@ async def estimate_item_value(
     image_datas = [d for d in image_datas if d]
     content_types = [t for t in content_types if t]
 
+    # Use provided task_id or generate a new one (do this early for progress tracking)
+    if not task_id:
+        task_id = str(uuid4())
+    
     if not image_items and not image_urls and not image_datas:
         raise HTTPException(
             status_code=400,
             detail="At least one image is required.",
         )
+
+    # Initialize task progress entry early (before processing starts)
+    # This allows frontend polling to find the task immediately, reducing 404 errors
+    # We'll update it with actual counts once we normalize items
+    async with get_progress_lock():
+        task_progress[task_id] = {
+            "total": 0,  # Will be updated once we know the count
+            "completed": 0,
+            "status": "pending",  # Set to "pending" initially, then "processing" when work starts
+        }
 
     try:
         # Preferred input: ordered image_items (JSON per image) to preserve UI ordering.
@@ -146,11 +169,18 @@ async def estimate_item_value(
                 try:
                     item = json.loads(raw)
                 except Exception as e:
+                    # Clean up task entry on validation error
+                    async with get_progress_lock():
+                        if task_id in task_progress:
+                            del task_progress[task_id]
                     raise HTTPException(
                         status_code=400,
                         detail="Invalid image_items JSON.",
                     ) from e
                 if not isinstance(item, dict):
+                    async with get_progress_lock():
+                        if task_id in task_progress:
+                            del task_progress[task_id]
                     raise HTTPException(
                         status_code=400,
                         detail="Invalid image_items JSON.",
@@ -173,89 +203,152 @@ async def estimate_item_value(
                     },
                 )
 
-        # Use provided task_id or generate a new one
-        if not task_id:
-            task_id = str(uuid4())
+        # Update task progress with actual image count
         total_images = len(normalized_items)
-        task_progress[task_id] = {
-            "total": total_images,
-            "completed": 0,
-            "status": "processing",
-        }
+        async with get_progress_lock():
+            if task_id in task_progress:
+                task_progress[task_id]["total"] = total_images
 
+        # Helper function to process a single image
+        async def process_single_image(idx: int, item: dict) -> tuple[int, list]:
+            """Process a single image and return (index, valuations). Handles errors gracefully."""
+            try:
+                kind = item.get("kind")
+                if kind == "gcs":
+                    gcs_uri = item.get("gcs_uri")
+                    if not gcs_uri or not isinstance(gcs_uri, str):
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Invalid image_items entry: missing gcs_uri.",
+                        )
+                    # Run synchronous estimate_value in thread pool to avoid blocking
+                    valuations = await asyncio.to_thread(
+                        estimate_value,
+                        image_uris=[gcs_uri],
+                        description=description,
+                        client=client,
+                        image_data_list=None,
+                        currency=currency,
+                    )
+                elif kind == "inline":
+                    data_url = item.get("data_url")
+                    if not data_url or not isinstance(data_url, str):
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Invalid image_items entry: missing data_url.",
+                        )
+                    try:
+                        _, encoded_data = data_url.split(",", 1)
+                        decoded_image_data = base64.b64decode(encoded_data)
+                    except Exception as e:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Invalid image_data format.",
+                        ) from e
+
+                    mime_type = item.get("content_type")
+                    if mime_type is not None and not isinstance(mime_type, str):
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Invalid image_items entry: invalid content_type.",
+                        )
+                    # Run synchronous estimate_value in thread pool to avoid blocking
+                    valuations = await asyncio.to_thread(
+                        estimate_value,
+                        image_uris=None,
+                        description=description,
+                        client=client,
+                        image_data_list=[(decoded_image_data, mime_type or "image/jpeg")],
+                        currency=currency,
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid image_items entry: unknown kind.",
+                    )
+                
+                # Update progress thread-safely
+                async with get_progress_lock():
+                    if task_id in task_progress:
+                        task_progress[task_id]["completed"] = task_progress[task_id].get("completed", 0) + 1
+                        task_progress[task_id]["status"] = "processing"
+                
+                return idx, valuations
+            except Exception as e:
+                logging.exception(f"Error processing image {idx}")
+                # Return empty valuations on error, but preserve index for ordering
+                async with get_progress_lock():
+                    if task_id in task_progress:
+                        task_progress[task_id]["completed"] = task_progress[task_id].get("completed", 0) + 1
+                        task_progress[task_id]["status"] = "processing"
+                # Re-raise HTTPException to preserve status codes
+                if isinstance(e, HTTPException):
+                    raise
+                # For other errors, return empty valuations list
+                return idx, []
+
+        # Update status to "processing" now that we're starting work
+        async with get_progress_lock():
+            if task_id in task_progress:
+                task_progress[task_id]["status"] = "processing"
+        
+        # Process all images in parallel
+        tasks = [
+            process_single_image(idx, item)
+            for idx, item in enumerate(normalized_items)
+        ]
+        results_list = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Process results and handle exceptions
         results: list[ValuationPerImage] = []
-        for idx, item in enumerate(normalized_items):
-
-            kind = item.get("kind")
-            if kind == "gcs":
-                gcs_uri = item.get("gcs_uri")
-                if not gcs_uri or not isinstance(gcs_uri, str):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Invalid image_items entry: missing gcs_uri.",
-                    )
-                valuations = estimate_value(
-                    image_uris=[gcs_uri],
-                    description=description,
-                    client=client,
-                    image_data_list=None,
-                    currency=currency,
-                )
-            elif kind == "inline":
-                data_url = item.get("data_url")
-                if not data_url or not isinstance(data_url, str):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Invalid image_items entry: missing data_url.",
-                    )
-                try:
-                    _, encoded_data = data_url.split(",", 1)
-                    decoded_image_data = base64.b64decode(encoded_data)
-                except Exception as e:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Invalid image_data format.",
-                    ) from e
-
-                mime_type = item.get("content_type")
-                if mime_type is not None and not isinstance(mime_type, str):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Invalid image_items entry: invalid content_type.",
-                    )
-                valuations = estimate_value(
-                    image_uris=None,
-                    description=description,
-                    client=client,
-                    image_data_list=[(decoded_image_data, mime_type or "image/jpeg")],
-                    currency=currency,
-                )
+        errors = []
+        for i, result in enumerate(results_list):
+            if isinstance(result, Exception):
+                # Handle exceptions from individual image processing
+                if isinstance(result, HTTPException):
+                    raise result
+                logging.error(f"Unexpected error processing image {i}: {result}")
+                errors.append(f"Image {i + 1}: {str(result)}")
+                results.append(ValuationPerImage(image_index=i, valuations=[]))
             else:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Invalid image_items entry: unknown kind.",
-                )
-
-            results.append(ValuationPerImage(image_index=idx, valuations=valuations))
-            
-            # Update progress after processing each image
-            task_progress[task_id]["completed"] = idx + 1
-            task_progress[task_id]["status"] = "processing"
-            
-            # Small delay to allow progress polling to catch up
-            await asyncio.sleep(0.1)
+                idx, valuations = result
+                results.append(ValuationPerImage(image_index=idx, valuations=valuations))
+        
+        # Sort results by image_index to maintain order
+        results.sort(key=lambda x: x.image_index)
+        
+        # If all images failed, raise an error
+        if len(errors) == len(normalized_items):
+            raise HTTPException(
+                status_code=500,
+                detail=f"All images failed to process: {'; '.join(errors)}",
+            )
+        
+        # Log partial failures but don't fail the request
+        if errors:
+            logging.warning(f"Some images failed to process: {'; '.join(errors)}")
 
         # Finalize task
-        task_progress[task_id]["status"] = "completed"
+        async with get_progress_lock():
+            if task_id in task_progress:
+                task_progress[task_id]["status"] = "completed"
 
         response_data = MultiValuationResponse(results=results)
         response = JSONResponse(content=response_data.model_dump())
         response.headers["X-Task-ID"] = task_id
         return response
     except HTTPException:
+        # Clean up task entry on HTTP errors (validation errors, etc.)
+        async with get_progress_lock():
+            if task_id in task_progress:
+                del task_progress[task_id]
         raise
     except Exception:
         logging.exception("Internal server error in /value")
+        # Clean up task entry on unexpected errors
+        async with get_progress_lock():
+            if task_id in task_progress:
+                task_progress[task_id]["status"] = "failed"
         raise HTTPException(
             status_code=500,
             detail="An internal error occurred during valuation.",
