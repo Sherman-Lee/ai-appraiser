@@ -78,8 +78,8 @@ function exportToCSV() {
       const searchUrlsStr =
         valuation.search_urls && Array.isArray(valuation.search_urls)
           ? valuation.search_urls
-              .filter((url) => url && url !== "N/A")
-              .join("; ")
+            .filter((url) => url && url !== "N/A")
+            .join("; ")
           : "";
 
       rows.push({
@@ -190,16 +190,16 @@ function renderUploadedImages() {
   uploadedImages.forEach((img) => {
     const item = img.gcsUri
       ? {
-          kind: "gcs",
-          gcs_uri: img.gcsUri,
-          data_url: img.dataUrl,
-          content_type: img.contentType || "image/jpeg",
-        }
+        kind: "gcs",
+        gcs_uri: img.gcsUri,
+        data_url: img.dataUrl,
+        content_type: img.contentType || "image/jpeg",
+      }
       : {
-          kind: "inline",
-          data_url: img.dataUrl,
-          content_type: img.contentType || "image/jpeg",
-        };
+        kind: "inline",
+        data_url: img.dataUrl,
+        content_type: img.contentType || "image/jpeg",
+      };
     hidden.appendChild(createHiddenInput("image_items", JSON.stringify(item)));
   });
 }
@@ -214,7 +214,7 @@ document
   .addEventListener("htmx:beforeRequest", function (evt) {
     // Generate task ID on client side before request
     const taskId = generateTaskId();
-    
+
     // Add task_id as a hidden form field
     const form = evt.target;
     let taskIdInput = form.querySelector('input[name="task_id"]');
@@ -225,49 +225,105 @@ document
       taskIdInput.value = taskId;
     }
 
-    // Function to start polling progress
     function startProgressPolling(taskId) {
-      const progressContainer = document.getElementById("progress-container");
       const spinner = document.getElementById("spinner");
-      
-      // Show progress container and spinner
-      progressContainer.classList.remove("hidden");
+      const progressBar = document.getElementById("progress-bar");
+      const progressText = document.getElementById("progress-text");
+
+      // Show spinner overlay (progress bar is always visible inside it)
       spinner.classList.remove("hidden");
-      
-      // Initialize progress display
-      const totalImages = uploadedImages.length;
-      progressContainer.textContent = `0/${totalImages} images appraised`;
+
+      // Start in indeterminate mode (animated shimmer)
+      progressBar.classList.add("indeterminate");
+      progressBar.style.width = "0%";
+      progressText.textContent = "Starting appraisal...";
+
+      // Track displayed count to animate step-by-step
+      let lastDisplayedCompleted = 0;
+      let animating = false; // true while stepping through queued updates
+
+      // Animate the progress bar and text one step at a time
+      function animateToCompleted(targetCompleted, total, finalStep, finalStatus) {
+        if (animating) return; // already animating, next poll will catch up
+
+        function stepUp() {
+          if (!progressPollingActive && lastDisplayedCompleted >= targetCompleted) return;
+          if (lastDisplayedCompleted >= targetCompleted) {
+            animating = false;
+            // Show the final message from the server for this poll
+            progressText.textContent = finalStep;
+            if (finalStatus === "completed") {
+              progressPollingActive = false;
+            }
+            return;
+          }
+
+          animating = true;
+          lastDisplayedCompleted++;
+
+          // Switch from indeterminate to determinate on first real progress
+          if (lastDisplayedCompleted === 1) {
+            progressBar.classList.remove("indeterminate");
+          }
+
+          const percent = total > 0 ? Math.round((lastDisplayedCompleted / total) * 100) : 0;
+          progressBar.style.width = percent + "%";
+          progressText.textContent = `Appraised image ${lastDisplayedCompleted} of ${total}...`;
+
+          // Pulse effect on text
+          progressText.style.opacity = "0.5";
+          requestAnimationFrame(() => {
+            progressText.style.transition = "opacity 0.3s ease-in";
+            progressText.style.opacity = "1";
+          });
+
+          // If more steps to show, wait 600ms before the next one
+          if (lastDisplayedCompleted < targetCompleted) {
+            setTimeout(stepUp, 600);
+          } else {
+            // Done stepping — show final server message after a brief pause
+            setTimeout(() => {
+              animating = false;
+              progressText.textContent = finalStep;
+              if (finalStatus === "completed") {
+                progressPollingActive = false;
+              }
+            }, 400);
+          }
+        }
+
+        stepUp();
+      }
 
       const poll = () => {
-        // If polling has been deactivated (e.g., request finished), stop immediately
         if (!progressPollingActive) return;
 
         fetch(`/progress/${taskId}`)
           .then(response => {
             if (!response.ok) {
-              // Task might not exist yet, keep polling
-              if (response.status === 404) {
-                if (!progressPollingActive) return;
-                setTimeout(poll, 500);
-                return null;
-              }
               throw new Error("Network response was not ok");
             }
             return response.json();
           })
           .then(data => {
-            if (!data) return; // 404 case, already scheduled next poll
-            
-            // Update progress message
+            if (!data) return;
+
             const completed = data.completed || 0;
             const total = data.total || 0;
-            progressContainer.textContent = `${completed}/${total} images appraised`;
+            const currentStep = data.current_step || `${completed}/${total} images appraised`;
 
-            // Check if task is complete
-            if (data.status === "completed") {
-              // Stop polling; afterRequest will hide spinner
-              progressPollingActive = false;
-              return;
+            // If there are new completions to show, animate through them
+            if (completed > lastDisplayedCompleted && total > 0) {
+              animateToCompleted(completed, total, currentStep, data.status);
+            } else {
+              // Update text for non-completion updates (e.g., status messages)
+              if (!animating) {
+                progressText.textContent = currentStep;
+              }
+              if (data.status === "completed") {
+                progressPollingActive = false;
+                return;
+              }
             }
 
             // Poll again after a short delay
@@ -276,7 +332,6 @@ document
           })
           .catch(error => {
             console.error("Error fetching progress:", error);
-            // Don't stop polling on error, just log it
             if (!progressPollingActive) return;
             setTimeout(poll, 1000);
           });
@@ -297,12 +352,17 @@ document
     // Stop any ongoing progress polling
     progressPollingActive = false;
 
-    // Hide spinner and progress container
+    // Hide spinner
     const spinner = document.getElementById("spinner");
-    const progressContainer = document.getElementById("progress-container");
+    const progressBar = document.getElementById("progress-bar");
+    const progressText = document.getElementById("progress-text");
     if (spinner) spinner.classList.add("hidden");
-    if (progressContainer) progressContainer.classList.add("hidden");
-    
+    if (progressBar) {
+      progressBar.classList.add("indeterminate");
+      progressBar.style.width = "0%";
+    }
+    if (progressText) progressText.textContent = "Starting appraisal...";
+
     if (evt.detail.successful) {
       let payload;
       try {
@@ -356,11 +416,10 @@ document
           <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
             <div class="flex gap-4">
               <div class="w-24 h-24 shrink-0 border border-gray-200 rounded-lg bg-white overflow-hidden flex items-center justify-center">
-                ${
-                  thumb
-                    ? `<img src="${thumb}" alt="Image ${imageIndex + 1}" class="w-full h-full object-contain" />`
-                    : `<div class="text-xs text-gray-400 px-2 text-center">No preview</div>`
-                }
+                ${thumb
+            ? `<img src="${thumb}" alt="Image ${imageIndex + 1}" class="w-full h-full object-contain" />`
+            : `<div class="text-xs text-gray-400 px-2 text-center">No preview</div>`
+          }
               </div>
               <div class="min-w-0 flex-1 break-words">
                 <p class="font-semibold text-gray-800">Image ${imageIndex + 1}</p>`;
@@ -474,21 +533,21 @@ async function processFiles(files, input) {
   try {
     // Filter image files and create upload promises for parallel execution
     const imageFiles = Array.from(files).filter(file => file.type.startsWith("image/"));
-    
+
     if (imageFiles.length === 0) {
       return;
     }
 
     // Upload all images in parallel
-    const uploadPromises = imageFiles.map(file => 
+    const uploadPromises = imageFiles.map(file =>
       uploadOneFile(file).catch(error => {
         // Return error info instead of throwing to allow partial success
         return { error: error instanceof Error ? error.message : String(error), file: file.name };
       })
     );
-    
+
     const results = await Promise.all(uploadPromises);
-    
+
     // Process successful uploads and collect errors
     const errors = [];
     for (let i = 0; i < results.length; i++) {
@@ -503,12 +562,12 @@ async function processFiles(files, input) {
         });
       }
     }
-    
+
     // Render once after all uploads complete
     if (uploadedImages.length > 0) {
       renderUploadedImages();
     }
-    
+
     // Show errors if any occurred (but allow partial success)
     if (errors.length > 0) {
       const errorMsg = errors.length === imageFiles.length

@@ -177,27 +177,16 @@ def test_estimate_value_malformed_json_response(
             client=mock_genai_client,
         )
 
-
-def test_estimate_value_invalid_search_urls(mock_google_cloud_clients_and_app) -> None:
-    _, _, mock_genai_client = mock_google_cloud_clients_and_app
-    mock_genai_client.models.generate_content.side_effect = create_mock_gemini_responses(
-        parsing_response_text='{"valuations": [{"estimated_value": 100.0, "currency": "USD", "reasoning": "Looks good", "search_urls": "not-a-list"}]}',
-    )
-
-    with pytest.raises(ValidationError):
-        estimate_value(
-            image_uris=["gs://some_bucket/some_image.jpg"],
-            description="A test item",
-            client=mock_genai_client,
-        )
-
-
-def test_estimate_value_invalid_estimated_value(
-    mock_google_cloud_clients_and_app,
+@pytest.mark.parametrize("parsing_text,description", [
+    ('{"valuations": [{"estimated_value": 100.0, "currency": "USD", "reasoning": "Looks good", "search_urls": "not-a-list"}]}', "invalid search_urls"),
+    ('{"valuations": [{"item_name": "some_item", "estimated_value": "not-a-number", "currency": "USD", "reasoning": "Looks good", "search_urls": ["example.com"]}]}', "invalid estimated_value"),
+])
+def test_estimate_value_invalid_fields(
+    parsing_text, description, mock_google_cloud_clients_and_app,
 ) -> None:
     _, _, mock_genai_client = mock_google_cloud_clients_and_app
     mock_genai_client.models.generate_content.side_effect = create_mock_gemini_responses(
-        parsing_response_text='{"valuations": [{"item_name": "some_item", "estimated_value": "not-a-number", "currency": "USD", "reasoning": "Looks good", "search_urls": ["example.com"]}]}',
+        parsing_response_text=parsing_text,
     )
 
     with pytest.raises(ValidationError):
@@ -986,3 +975,72 @@ def test_value_endpoint_integration_style(mock_google_cloud_clients_and_app) -> 
         ],
     }
     assert mock_models.generate_content.call_count == 2
+
+
+def test_progress_endpoint_returns_current_step(mock_google_cloud_clients_and_app) -> None:
+    """GET /progress/{task_id} should include the current_step field."""
+    from server import task_progress, get_progress_lock
+    import asyncio
+
+    client, _, _ = mock_google_cloud_clients_and_app
+    test_task_id = "test_progress_step"
+
+    # Manually seed a progress entry
+    task_progress[test_task_id] = {
+        "total": 3,
+        "completed": 1,
+        "status": "processing",
+        "current_step": "Appraised image 1 of 3...",
+    }
+
+    response = client.get(f"/progress/{test_task_id}")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["current_step"] == "Appraised image 1 of 3..."
+    assert data["completed"] == 1
+    assert data["total"] == 3
+
+    # Clean up
+    del task_progress[test_task_id]
+
+
+@patch("server.estimate_value")
+def test_progress_updated_during_valuation(
+    mock_estimate_value,
+    mock_google_cloud_clients_and_app,
+) -> None:
+    """Progress dict should contain current_step after valuation completes."""
+    from server import task_progress
+
+    client, _, _ = mock_google_cloud_clients_and_app
+    mock_estimate_value.return_value = [
+        ValuationResponse(
+            item_name="some_item",
+            estimated_value=50.0,
+            currency=Currency.USD,
+            reasoning="Progress test",
+            search_urls=[],
+        ),
+    ]
+
+    response = client.post(
+        "/value",
+        data={
+            "description": "Progress test item",
+            "image_datas": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
+            "content_types": "image/jpeg",
+            "task_id": "test_progress_valuation",
+        },
+    )
+    assert response.status_code == 200
+
+    # After completion, the progress entry should exist with current_step set
+    progress = task_progress.get("test_progress_valuation")
+    assert progress is not None
+    assert progress["status"] == "completed"
+    assert progress["current_step"] == "Complete!"
+    assert progress["completed"] == progress["total"]
+
+    # Clean up
+    if "test_progress_valuation" in task_progress:
+        del task_progress["test_progress_valuation"]

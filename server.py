@@ -110,7 +110,14 @@ def get_progress_lock() -> asyncio.Lock:
 async def get_progress(task_id: str):
     """Retrieve progress for a valuation task."""
     if task_id not in task_progress:
-        raise HTTPException(status_code=404, detail="Task not found")
+        # Return a default "waiting" state instead of 404 to avoid error noise
+        # during the brief window before the /value endpoint registers the task.
+        return JSONResponse(content={
+            "total": 0,
+            "completed": 0,
+            "status": "waiting",
+            "current_step": "Starting appraisal...",
+        })
     return JSONResponse(content=task_progress[task_id])
 
 
@@ -159,6 +166,7 @@ async def estimate_item_value(
             "total": 0,  # Will be updated once we know the count
             "completed": 0,
             "status": "pending",  # Set to "pending" initially, then "processing" when work starts
+            "current_step": "Preparing images...",
         }
 
     try:
@@ -270,8 +278,13 @@ async def estimate_item_value(
                 # Update progress thread-safely
                 async with get_progress_lock():
                     if task_id in task_progress:
-                        task_progress[task_id]["completed"] = task_progress[task_id].get("completed", 0) + 1
+                        new_completed = task_progress[task_id].get("completed", 0) + 1
+                        task_progress[task_id]["completed"] = new_completed
                         task_progress[task_id]["status"] = "processing"
+                        if new_completed >= task_progress[task_id].get("total", 0):
+                            task_progress[task_id]["current_step"] = "Finalizing results..."
+                        else:
+                            task_progress[task_id]["current_step"] = f"Appraised image {new_completed} of {task_progress[task_id].get('total', 0)}..."
                 
                 return idx, valuations
             except Exception as e:
@@ -279,8 +292,10 @@ async def estimate_item_value(
                 # Update progress before re-raising
                 async with get_progress_lock():
                     if task_id in task_progress:
-                        task_progress[task_id]["completed"] = task_progress[task_id].get("completed", 0) + 1
+                        new_completed = task_progress[task_id].get("completed", 0) + 1
+                        task_progress[task_id]["completed"] = new_completed
                         task_progress[task_id]["status"] = "processing"
+                        task_progress[task_id]["current_step"] = f"Appraised image {new_completed} of {task_progress[task_id].get('total', 0)}..."
                 # Re-raise all exceptions so asyncio.gather captures them;
                 # the outer handler converts non-HTTP errors to 500 responses.
                 raise
@@ -289,6 +304,7 @@ async def estimate_item_value(
         async with get_progress_lock():
             if task_id in task_progress:
                 task_progress[task_id]["status"] = "processing"
+                task_progress[task_id]["current_step"] = f"Appraising {total_images} image{'s' if total_images != 1 else ''}..."
         
         # Process all images in parallel
         tasks = [
@@ -331,6 +347,7 @@ async def estimate_item_value(
         async with get_progress_lock():
             if task_id in task_progress:
                 task_progress[task_id]["status"] = "completed"
+                task_progress[task_id]["current_step"] = "Complete!"
 
         response_data = MultiValuationResponse(results=results)
         response = JSONResponse(content=response_data.model_dump())

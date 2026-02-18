@@ -1,179 +1,161 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Claim Item Appraiser</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/htmx.org@2"></script>
-    <script>
-      let defaultCurrency = 'USD';
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              primary: { 600: "#2563eb", 700: "#1d4ed8" },
-            },
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Claim Item Appraiser</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@2"></script>
+  <script>
+    let defaultCurrency = 'USD';
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: { 600: "#2563eb", 700: "#1d4ed8" },
           },
         },
-      };
-    </script>
-  </head>
-  <body class="bg-gray-100">
-    <div class="container mx-auto p-6 md:p-10 max-w-full min-h-full">
-      <div class="bg-white p-6 md:p-10 rounded-xl shadow-sm border border-gray-200/80">
-        <header class="mb-8">
-          <h1 class="text-3xl md:text-4xl font-semibold text-gray-800 tracking-tight">
-            Claim Item Appraiser
-          </h1>
-          <div class="mt-4 h-1 w-full max-w-md bg-gray-200 rounded-full" aria-hidden="true"></div>
-        </header>
+      },
+    };
+  </script>
+</head>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-10">
-          <div class="order-1">
-            <div class="bg-gray-50/80 p-6 rounded-xl border border-gray-200/60">
-              <h2 class="text-lg font-semibold text-gray-700 mb-4">
-                Add photos of your items
-              </h2>
+<body class="bg-gray-100">
+  <div class="container mx-auto p-6 md:p-10 max-w-full min-h-full">
+    <div class="bg-white p-6 md:p-10 rounded-xl shadow-sm border border-gray-200/80">
+      <header class="mb-8">
+        <h1 class="text-3xl md:text-4xl font-semibold text-gray-800 tracking-tight">
+          Claim Item Appraiser
+        </h1>
+        <div class="mt-4 h-1 w-full max-w-md bg-gray-200 rounded-full" aria-hidden="true"></div>
+      </header>
 
-              <div id="image-preview" class="mb-4">
-                <div
-                  id="image-preview-empty"
-                  class="dropzone-main border-2 border-dashed border-gray-300 rounded-xl w-full min-h-[200px] flex flex-col items-center justify-center gap-2 bg-white hover:bg-gray-50 hover:border-primary-600/50 transition cursor-pointer"
-                  role="button"
-                  tabindex="0"
-                  aria-label="Add photos of your items. Drag and drop or click to upload. GIF, PNG, or JPG supported."
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-12 w-12 text-gray-400" aria-hidden="true">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
-                  </svg>
-                  <p class="text-xs text-gray-500">Drag and drop or click to upload</p>
-                  <p class="text-xs text-gray-400">GIF, PNG, or JPG</p>
-                  <input
-                    id="image_file"
-                    name="image_file"
-                    type="file"
-                    multiple
-                    accept="image/*"
-                    class="hidden"
-                    aria-label="Choose image files to upload"
-                  />
-                </div>
-                <div
-                  id="image-preview-grid"
-                  class="grid grid-cols-2 sm:grid-cols-3 gap-3"
-                ></div>
-                <div id="add-more-photos" class="mt-3 hidden">
-                  <label
-                    for="image_file_add"
-                    class="inline-flex items-center gap-2 text-sm text-primary-600 hover:text-primary-700 font-medium cursor-pointer"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-4 w-4">
-                      <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                    </svg>
-                    Add more photos
-                  </label>
-                  <input
-                    id="image_file_add"
-                    type="file"
-                    multiple
-                    accept="image/*"
-                    class="hidden"
-                    aria-label="Add more image files"
-                  />
-                </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-10">
+        <div class="order-1">
+          <div class="bg-gray-50/80 p-6 rounded-xl border border-gray-200/60">
+            <h2 class="text-lg font-semibold text-gray-700 mb-4">
+              Add photos of your items
+            </h2>
+
+            <div id="image-preview" class="mb-4">
+              <div id="image-preview-empty"
+                class="dropzone-main border-2 border-dashed border-gray-300 rounded-xl w-full min-h-[200px] flex flex-col items-center justify-center gap-2 bg-white hover:bg-gray-50 hover:border-primary-600/50 transition cursor-pointer"
+                role="button" tabindex="0"
+                aria-label="Add photos of your items. Drag and drop or click to upload. GIF, PNG, or JPG supported.">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
+                  stroke="currentColor" class="h-12 w-12 text-gray-400" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round"
+                    d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
+                </svg>
+                <p class="text-xs text-gray-500">Drag and drop or click to upload</p>
+                <p class="text-xs text-gray-400">GIF, PNG, or JPG</p>
+                <input id="image_file" name="image_file" type="file" multiple accept="image/*" class="hidden"
+                  aria-label="Choose image files to upload" />
               </div>
+              <div id="image-preview-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-3"></div>
+              <div id="add-more-photos" class="mt-3 hidden">
+                <label for="image_file_add"
+                  class="inline-flex items-center gap-2 text-sm text-primary-600 hover:text-primary-700 font-medium cursor-pointer">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
+                    stroke="currentColor" class="h-4 w-4">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                  </svg>
+                  Add more photos
+                </label>
+                <input id="image_file_add" type="file" multiple accept="image/*" class="hidden"
+                  aria-label="Add more image files" />
+              </div>
+            </div>
 
-              <div id="upload-error" class="mt-2 text-sm text-red-600 hidden" role="alert"></div>
+            <div id="upload-error" class="mt-2 text-sm text-red-600 hidden" role="alert"></div>
 
-              <form
-                id="valuation-form"
-                hx-post="/value"
-                hx-target="#results"
-                hx-swap="innerHTML"
-              >
-                <div id="image-hidden-fields"></div>
+            <form id="valuation-form" hx-post="/value" hx-target="#results" hx-swap="innerHTML">
+              <div id="image-hidden-fields"></div>
 
-                <div class="mt-6 pt-4 border-t border-gray-200">
-                  <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Details (optional)</p>
-                  <div class="space-y-4">
-                    <div>
-                      <label for="description" class="block text-gray-600 text-sm mb-1">Description</label>
-                      <textarea
-                        id="description"
-                        name="description"
-                        rows="2"
-                        placeholder="e.g. brand, model, condition"
-                        class="w-full rounded-lg border border-gray-300 py-2 px-3 text-gray-700 placeholder-gray-400 text-sm focus:outline-none focus:ring-2 focus:ring-primary-600/30 focus:border-primary-600"
-                      ></textarea>
-                    </div>
-                    <div>
-                      <label for="currency" class="block text-gray-600 text-sm mb-1">Currency</label>
-                      <select
-                        id="currency"
-                        name="currency"
-                        class="w-full rounded-lg border border-gray-300 py-2 px-3 text-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-primary-600/30 focus:border-primary-600 bg-white"
-                      >
-                        <option value="USD">USD &mdash; US Dollar</option>
-                        <option value="EUR">EUR &mdash; Euro</option>
-                        <option value="GBP">GBP &mdash; British Pound</option>
-                        <option value="JPY">JPY &mdash; Japanese Yen</option>
-                        <option value="CAD">CAD &mdash; Canadian Dollar</option>
-                      </select>
-                    </div>
+              <div class="mt-6 pt-4 border-t border-gray-200">
+                <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Details (optional)</p>
+                <div class="space-y-4">
+                  <div>
+                    <label for="description" class="block text-gray-600 text-sm mb-1">Description</label>
+                    <textarea id="description" name="description" rows="2" placeholder="e.g. brand, model, condition"
+                      class="w-full rounded-lg border border-gray-300 py-2 px-3 text-gray-700 placeholder-gray-400 text-sm focus:outline-none focus:ring-2 focus:ring-primary-600/30 focus:border-primary-600"></textarea>
+                  </div>
+                  <div>
+                    <label for="currency" class="block text-gray-600 text-sm mb-1">Currency</label>
+                    <select id="currency" name="currency"
+                      class="w-full rounded-lg border border-gray-300 py-2 px-3 text-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-primary-600/30 focus:border-primary-600 bg-white">
+                      <option value="USD">USD &mdash; US Dollar</option>
+                      <option value="EUR">EUR &mdash; Euro</option>
+                      <option value="GBP">GBP &mdash; British Pound</option>
+                      <option value="JPY">JPY &mdash; Japanese Yen</option>
+                      <option value="CAD">CAD &mdash; Canadian Dollar</option>
+                    </select>
                   </div>
                 </div>
+              </div>
 
-                <div class="mt-6 flex flex-wrap items-center gap-3">
-                  <button
-                    type="submit"
-                    id="estimate-value-button"
-                    hx-disable-element="this"
-                    class="bg-primary-600 hover:bg-primary-700 text-white font-semibold py-2.5 px-5 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-600/50 disabled:opacity-60 disabled:cursor-not-allowed transition"
-                  >
-                    Get appraisal results
-                  </button>
-                  <button
-                    type="button"
-                    id="reset-button"
-                    class="text-gray-600 hover:text-gray-800 font-medium py-2.5 px-4 rounded-lg border border-gray-300 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-400/50 transition"
-                  >
-                    Start over
-                  </button>
-                </div>
-                <div id="submit-error" class="mt-2 text-sm text-red-600 hidden" role="alert"></div>
-              </form>
-            </div>
-          </div>
-
-          <div class="order-2">
-            <div class="bg-gray-50/80 p-6 rounded-xl border border-gray-200/60 h-full flex flex-col">
-              <div class="flex items-center justify-between mb-1">
-                <h2 class="text-lg font-semibold text-gray-700">Your appraisal results</h2>
-                <button
-                  type="button"
-                  id="download-csv-button"
-                  class="hidden text-gray-600 hover:text-gray-800 font-medium py-1.5 px-3 rounded-lg border border-gray-300 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-400/50 transition text-sm"
-                >
-                  Download CSV
+              <div class="mt-6 flex flex-wrap items-center gap-3">
+                <button type="submit" id="estimate-value-button" hx-disable-element="this"
+                  class="bg-primary-600 hover:bg-primary-700 text-white font-semibold py-2.5 px-5 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-600/50 disabled:opacity-60 disabled:cursor-not-allowed transition">
+                  Get appraisal results
+                </button>
+                <button type="button" id="reset-button"
+                  class="text-gray-600 hover:text-gray-800 font-medium py-2.5 px-4 rounded-lg border border-gray-300 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-400/50 transition">
+                  Start over
                 </button>
               </div>
-              <div
-                id="results-container"
-                class="relative flex-1 min-h-[280px] rounded-lg bg-white/60 border border-gray-200/60"
-              >
-                <div id="results" class="p-4 min-h-full break-words">
-                  <p id="results-empty-message" class="text-gray-500 text-sm">
-                    Estimated values and reasonings will appear here after you add photos and click "Get appraisal results".
-                  </p>
-                </div>
-                <div
-                  id="spinner"
-                  class="hidden absolute inset-0 flex flex-col items-center justify-center bg-white/80 rounded-lg"
-                  aria-hidden="true"
-                >
-                  <div class="animate-spin rounded-full h-12 w-12 border-2 border-gray-300 border-t-primary-600" aria-hidden="true"></div>
-                  <div id="progress-container" class="mt-4 text-sm text-gray-600 hidden" aria-live="polite"></div>
+              <div id="submit-error" class="mt-2 text-sm text-red-600 hidden" role="alert"></div>
+            </form>
+          </div>
+        </div>
+
+        <div class="order-2">
+          <div class="bg-gray-50/80 p-6 rounded-xl border border-gray-200/60 h-full flex flex-col">
+            <div class="flex items-center justify-between mb-1">
+              <h2 class="text-lg font-semibold text-gray-700">Your appraisal results</h2>
+              <button type="button" id="download-csv-button"
+                class="hidden text-gray-600 hover:text-gray-800 font-medium py-1.5 px-3 rounded-lg border border-gray-300 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-400/50 transition text-sm">
+                Download CSV
+              </button>
+            </div>
+            <div id="results-container"
+              class="relative flex-1 min-h-[280px] rounded-lg bg-white/60 border border-gray-200/60">
+              <div id="results" class="p-4 min-h-full break-words">
+                <p id="results-empty-message" class="text-gray-500 text-sm">
+                  Estimated values and reasonings will appear here after you add photos and click "Get appraisal
+                  results".
+                </p>
+              </div>
+              <div id="spinner"
+                class="hidden absolute inset-0 flex flex-col items-center justify-center bg-white/80 rounded-lg"
+                aria-hidden="true">
+                <style>
+                  @keyframes progress-indeterminate {
+                    0% {
+                      background-position: -200% 0;
+                    }
+
+                    100% {
+                      background-position: 200% 0;
+                    }
+                  }
+
+                  #progress-bar.indeterminate {
+                    width: 100% !important;
+                    background: linear-gradient(90deg, #2563eb 25%, #60a5fa 50%, #2563eb 75%);
+                    background-size: 200% 100%;
+                    animation: progress-indeterminate 1.5s ease-in-out infinite;
+                  }
+                </style>
+                <div id="progress-container" class="w-3/4 max-w-xs">
+                  <div class="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
+                    <div id="progress-bar"
+                      class="bg-primary-600 h-2.5 rounded-full transition-all duration-500 ease-out indeterminate">
+                    </div>
+                  </div>
+                  <p id="progress-text" class="mt-3 text-sm text-gray-600 text-center" aria-live="polite">Starting
+                    appraisal...</p>
                 </div>
               </div>
             </div>
@@ -181,6 +163,8 @@
         </div>
       </div>
     </div>
-    <script src="/static/script.js"></script>
-  </body>
+  </div>
+  <script src="/static/script.js"></script>
+</body>
+
 </html>
