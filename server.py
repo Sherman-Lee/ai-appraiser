@@ -276,16 +276,14 @@ async def estimate_item_value(
                 return idx, valuations
             except Exception as e:
                 logging.exception(f"Error processing image {idx}")
-                # Return empty valuations on error, but preserve index for ordering
+                # Update progress before re-raising
                 async with get_progress_lock():
                     if task_id in task_progress:
                         task_progress[task_id]["completed"] = task_progress[task_id].get("completed", 0) + 1
                         task_progress[task_id]["status"] = "processing"
-                # Re-raise HTTPException to preserve status codes
-                if isinstance(e, HTTPException):
-                    raise
-                # For other errors, return empty valuations list
-                return idx, []
+                # Re-raise all exceptions so asyncio.gather captures them;
+                # the outer handler converts non-HTTP errors to 500 responses.
+                raise
 
         # Update status to "processing" now that we're starting work
         async with get_progress_lock():
@@ -301,7 +299,8 @@ async def estimate_item_value(
         
         # Process results and handle exceptions
         results: list[ValuationPerImage] = []
-        errors = []
+        errors: list[str] = []
+        first_non_http_exc: Exception | None = None
         for i, result in enumerate(results_list):
             if isinstance(result, Exception):
                 # Handle exceptions from individual image processing
@@ -309,6 +308,8 @@ async def estimate_item_value(
                     raise result
                 logging.error(f"Unexpected error processing image {i}: {result}")
                 errors.append(f"Image {i + 1}: {str(result)}")
+                if first_non_http_exc is None:
+                    first_non_http_exc = result
                 results.append(ValuationPerImage(image_index=i, valuations=[]))
             else:
                 idx, valuations = result
@@ -317,12 +318,10 @@ async def estimate_item_value(
         # Sort results by image_index to maintain order
         results.sort(key=lambda x: x.image_index)
         
-        # If all images failed, raise an error
-        if len(errors) == len(normalized_items):
-            raise HTTPException(
-                status_code=500,
-                detail=f"All images failed to process: {'; '.join(errors)}",
-            )
+        # If all images failed, re-raise the original exception so the outer
+        # except block returns the generic 500 message.
+        if len(errors) == len(normalized_items) and first_non_http_exc is not None:
+            raise first_non_http_exc
         
         # Log partial failures but don't fail the request
         if errors:
