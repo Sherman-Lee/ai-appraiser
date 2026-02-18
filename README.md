@@ -55,6 +55,9 @@ The AI Appraiser application follows a client-server architecture:
     pip install -r requirements.txt
     ```
 
+> [!IMPORTANT]
+> **IDE Setup:** If you are using Cursor or VS Code, ensure you select the Python interpreter from the virtual environment (`venv/Scripts/python.exe`). You can do this by clicking the Python version in the bottom status bar or pressing `Ctrl+Shift+P` and searching for "Python: Select Interpreter".
+
 ## Running the Application
 
 1. **Set environment variables:**

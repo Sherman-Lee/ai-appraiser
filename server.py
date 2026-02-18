@@ -15,7 +15,6 @@ from google import genai
 from google.cloud import storage
 from typing_extensions import Annotated, Dict, Any
 from uuid import uuid4
-import time
 
 from data_model import Currency, ValuationPerImage, MultiValuationResponse
 from env_config import PROJECT_ID, LOCATION, STORAGE_BUCKET, DEFAULT_CURRENCY
