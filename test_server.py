@@ -8,6 +8,7 @@ import pytest
 from freezegun import freeze_time
 from google.api_core.exceptions import GoogleAPIError
 from pydantic import ValidationError
+import json
 
 from data_model import ValuationResponse
 from server import (
@@ -388,8 +389,13 @@ def test_value_endpoint_success_gbp(
         "/value",
         data={
             "description": "A test item",
-            "image_datas": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
-            "content_types": "image/jpeg",
+            "image_items": [
+                json.dumps({
+                    "kind": "inline",
+                    "data_url": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
+                    "content_type": "image/jpeg"
+                })
+            ],
             "currency": "GBP",
         },
     )
@@ -438,7 +444,7 @@ def test_value_endpoint_success_image_url(
         "/value",
         data={
             "description": "A test item from URL",
-            "image_urls": "gs://test-bucket/test_image.jpg",
+            "image_items": [json.dumps({"kind": "gcs", "gcs_uri": "gs://test-bucket/test_image.jpg"})],
         },
     )
     assert response.status_code == 200
@@ -487,9 +493,9 @@ def test_value_endpoint_multiple_image_urls(
         "/value",
         data={
             "description": "A test item with multiple URLs",
-            "image_urls": [
-                "gs://test-bucket/image_1.jpg",
-                "gs://test-bucket/image_2.jpg",
+            "image_items": [
+                json.dumps({"kind": "gcs", "gcs_uri": "gs://test-bucket/image_1.jpg"}),
+                json.dumps({"kind": "gcs", "gcs_uri": "gs://test-bucket/image_2.jpg"}),
             ],
         },
     )
@@ -560,11 +566,18 @@ def test_value_endpoint_multiple_image_datas(
         "/value",
         data={
             "description": "A test item with multiple inline images",
-            "image_datas": [
-                "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
-                "data:image/png;base64,ZmFrZSBpbWFnZSBkYXRh",
+            "image_items": [
+                json.dumps({
+                    "kind": "inline",
+                    "data_url": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
+                    "content_type": "image/jpeg"
+                }),
+                json.dumps({
+                    "kind": "inline",
+                    "data_url": "data:image/png;base64,ZmFrZSBpbWFnZSBkYXRh",
+                    "content_type": "image/png"
+                }),
             ],
-            "content_types": ["image/jpeg", "image/png"],
         },
     )
 
@@ -634,9 +647,14 @@ def test_value_endpoint_mixed_image_urls_and_datas(
         "/value",
         data={
             "description": "A test item with mixed images",
-            "image_urls": ["gs://test-bucket/url_image.jpg"],
-            "image_datas": ["data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50"],
-            "content_types": ["image/jpeg"],
+            "image_items": [
+                json.dumps({"kind": "gcs", "gcs_uri": "gs://test-bucket/url_image.jpg"}),
+                json.dumps({
+                    "kind": "inline",
+                    "data_url": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
+                    "content_type": "image/jpeg"
+                }),
+            ],
         },
     )
 
@@ -685,134 +703,6 @@ def test_value_endpoint_mixed_image_urls_and_datas(
         currency=Currency(DEFAULT_CURRENCY),
     )
 
-
-@patch("server.estimate_value")
-def test_value_endpoint_uses_image_data_when_url_is_empty(
-    mock_estimate_value,
-    mock_google_cloud_clients_and_app,
-) -> None:
-    client, _, _ = mock_google_cloud_clients_and_app
-    mock_estimate_value.return_value = [
-        ValuationResponse(
-            item_name="some_item",
-            estimated_value=50.0,
-            currency=Currency.CAD,
-            reasoning="Data with empty URL",
-            search_urls=[],
-        ),
-    ]
-    response = client.post(
-        "/value",
-        data={
-            "description": "A test item with empty URL",
-            "image_urls": "",
-            "image_datas": "data:image/png;base64,ZmFrZSBpbWFnZSBkYXRh",
-            "content_types": "image/png",
-            "currency": "CAD",
-        },
-    )
-    assert response.status_code == 200
-    assert response.json() == {
-        "results": [
-            {
-                "image_index": 0,
-                "valuations": [
-                    {
-                        "item_name": "some_item",
-                        "estimated_value": 50.0,
-                        "currency": "CAD",
-                        "reasoning": "Data with empty URL",
-                        "search_urls": [],
-                    },
-                ],
-            },
-        ],
-    }
-    mock_estimate_value.assert_called_once_with(
-        image_uris=None,
-        description="A test item with empty URL",
-        client=ANY,
-        image_data_list=[(b"fake image data", "image/png")],
-        currency=Currency.CAD,
-    )
-
-
-@patch("server.estimate_value")
-def test_value_endpoint_both_inputs_prioritizes_url(
-    mock_estimate_value,
-    mock_google_cloud_clients_and_app,
-) -> None:
-    client, _, _ = mock_google_cloud_clients_and_app
-    mock_estimate_value.return_value = [
-        ValuationResponse(
-            item_name="some_item",
-            estimated_value=200.0,
-            currency=Currency.JPY,
-            reasoning="URL should be prioritized",
-            search_urls=["http://example.com/both"],
-        ),
-    ]
-    image_data_str = (
-        "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
-    )
-    response = client.post(
-        "/value",
-        data={
-            "description": "A test item with both URL and data",
-            "image_urls": "gs://test-bucket/preferred_image.jpg",
-            "image_datas": image_data_str,
-            "content_types": "image/gif",
-            "currency": "JPY",
-        },
-    )
-    assert response.status_code == 200
-    assert response.json() == {
-        "results": [
-            {
-                "image_index": 0,
-                "valuations": [
-                    {
-                        "item_name": "some_item",
-                        "estimated_value": 200.0,
-                        "currency": "JPY",
-                        "reasoning": "URL should be prioritized",
-                        "search_urls": ["http://example.com/both"],
-                    },
-                ],
-            },
-            {
-                "image_index": 1,
-                "valuations": [
-                    {
-                        "item_name": "some_item",
-                        "estimated_value": 200.0,
-                        "currency": "JPY",
-                        "reasoning": "URL should be prioritized",
-                        "search_urls": ["http://example.com/both"],
-                    },
-                ],
-            },
-        ],
-    }
-    assert mock_estimate_value.call_count == 2
-    mock_estimate_value.assert_any_call(
-        image_uris=["gs://test-bucket/preferred_image.jpg"],
-        description="A test item with both URL and data",
-        client=ANY,
-        image_data_list=None,
-        currency=Currency.JPY,
-    )
-    mock_estimate_value.assert_any_call(
-        image_uris=None,
-        description="A test item with both URL and data",
-        client=ANY,
-        image_data_list=[
-            (base64.b64decode(image_data_str.split(",", 1)[1]), "image/gif"),
-        ],
-        currency=Currency.JPY,
-    )
-
-
 @patch("server.estimate_value")
 def test_value_endpoint_one_image_two_valuations(
     mock_estimate_value,
@@ -841,8 +731,13 @@ def test_value_endpoint_one_image_two_valuations(
         "/value",
         data={
             "description": "Two items in one image",
-            "image_datas": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
-            "content_types": "image/jpeg",
+            "image_items": [
+                json.dumps({
+                    "kind": "inline",
+                    "data_url": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
+                    "content_type": "image/jpeg"
+                })
+            ],
         },
     )
 
@@ -871,8 +766,13 @@ def test_value_endpoint_estimate_value_exception(
         "/value",
         data={
             "description": "A test item that causes an error",
-            "image_datas": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
-            "content_types": "image/jpeg",
+            "image_items": [
+                json.dumps({
+                    "kind": "inline",
+                    "data_url": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
+                    "content_type": "image/jpeg"
+                })
+            ],
         },
     )
     assert response.status_code == 500
@@ -916,8 +816,13 @@ def test_value_endpoint_invalid_currency(mock_google_cloud_clients_and_app) -> N
         "/value",
         data={
             "description": "A test item",
-            "image_datas": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
-            "content_types": "image/jpeg",
+            "image_items": [
+                json.dumps({
+                    "kind": "inline",
+                    "data_url": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
+                    "content_type": "image/jpeg"
+                })
+            ],
             "currency": "INVALID_CURRENCY",
         },
     )
@@ -951,8 +856,13 @@ def test_value_endpoint_integration_style(mock_google_cloud_clients_and_app) -> 
         "/value",
         data={
             "description": "An integration test item",
-            "image_datas": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
-            "content_types": "image/jpeg",
+            "image_items": [
+                json.dumps({
+                    "kind": "inline",
+                    "data_url": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
+                    "content_type": "image/jpeg"
+                })
+            ],
             "currency": "USD",
         },
     )
@@ -1027,8 +937,13 @@ def test_progress_updated_during_valuation(
         "/value",
         data={
             "description": "Progress test item",
-            "image_datas": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
-            "content_types": "image/jpeg",
+            "image_items": [
+                json.dumps({
+                    "kind": "inline",
+                    "data_url": "data:image/jpeg;base64,ZmFrZSBpbWFnZSBjb250ZW50",
+                    "content_type": "image/jpeg"
+                })
+            ],
             "task_id": "test_progress_valuation",
         },
     )

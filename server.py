@@ -124,34 +124,18 @@ async def get_progress(task_id: str):
 async def estimate_item_value(
     description: Annotated[str, Form()],
     image_items: Annotated[list[str], Form()] = [],
-    image_urls: Annotated[list[str], Form()] = [],
-    image_datas: Annotated[list[str], Form()] = [],
-    content_types: Annotated[list[str], Form()] = [],
-    image_url: Annotated[str | None, Form()] = None,
-    image_data: Annotated[str | None, Form()] = None,
-    content_type: Annotated[str | None, Form()] = None,
     currency: Annotated[Currency, Form()] = Currency(DEFAULT_CURRENCY),
     task_id: Annotated[str | None, Form()] = None,
     client: genai.Client = Depends(get_genai_client),
 ):
     """Estimates the value of an item based on an image and text input."""
-    if image_url:
-        image_urls = [*image_urls, image_url]
-    if image_data:
-        image_datas = [*image_datas, image_data]
-    if content_type:
-        content_types = [*content_types, content_type]
-
     image_items = [s for s in image_items if s]
-    image_urls = [u for u in image_urls if u]
-    image_datas = [d for d in image_datas if d]
-    content_types = [t for t in content_types if t]
 
     # Use provided task_id or generate a new one (do this early for progress tracking)
     if not task_id:
         task_id = str(uuid4())
     
-    if not image_items and not image_urls and not image_datas:
+    if not image_items:
         raise HTTPException(
             status_code=400,
             detail="At least one image is required.",
@@ -193,22 +177,6 @@ async def estimate_item_value(
                         detail="Invalid image_items JSON.",
                     )
                 normalized_items.append(item)
-        else:
-            # Back-compat: old separate lists. Order is best-effort when URLs and inline data
-            # are mixed, because separate lists lose original ordering.
-            normalized_items.extend({"kind": "gcs", "gcs_uri": u} for u in image_urls)
-            for i, d in enumerate(image_datas):
-                normalized_items.append(
-                    {
-                        "kind": "inline",
-                        "data_url": d,
-                        "content_type": (
-                            content_types[i]
-                            if i < len(content_types) and content_types[i]
-                            else None
-                        ),
-                    },
-                )
 
         # Update task progress with actual image count
         total_images = len(normalized_items)
