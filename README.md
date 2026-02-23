@@ -2,7 +2,7 @@
 
 [![Python Tests](https://github.com/kweinmeister/ai-appraiser/actions/workflows/python-tests.yml/badge.svg)](https://github.com/kweinmeister/ai-appraiser/actions/workflows/python-tests.yml)
 
-![AI Appraiser GIF](ai-appraiser.gif)
+![AI Appraiser GIF](demo/ai-appraiser.gif)
 
 This application estimates the value of items from images. It leverages Google's [Gemini](https://ai.google.dev/gemini-api/docs) model with integrated [Grounding with Google Search](https://ai.google.dev/gemini-api/docs/grounding) capabilities to improve the accuracy of valuations.
 
