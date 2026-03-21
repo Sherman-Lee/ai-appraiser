@@ -77,6 +77,9 @@ The HavenClaim application follows a client-server architecture:
 You can easily deploy this application to Google Cloud Run:
 
 ```bash
+source .env
+```
+```bash
 gcloud run deploy ai-appraiser \
   --source . \
   --region $LOCATION \
