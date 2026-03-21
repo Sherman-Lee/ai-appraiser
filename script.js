@@ -679,6 +679,46 @@ if (downloadCsvButton) {
   });
 }
 
+// Motivation Modal Logic
+const motivationModal = document.getElementById("motivation-modal");
+const whyThisToolButton = document.getElementById("why-this-tool-button");
+const closeModalButtons = [
+  document.getElementById("close-modal"),
+  document.getElementById("close-modal-btn"),
+  document.getElementById("modal-backdrop")
+];
+
+function openModal() {
+  if (motivationModal) {
+    motivationModal.classList.remove("hidden");
+    document.body.classList.add("overflow-hidden");
+  }
+}
+
+function closeModal() {
+  if (motivationModal) {
+    motivationModal.classList.add("hidden");
+    document.body.classList.remove("overflow-hidden");
+  }
+}
+
+if (whyThisToolButton) {
+  whyThisToolButton.addEventListener("click", openModal);
+}
+
+closeModalButtons.forEach(btn => {
+  if (btn) {
+    btn.addEventListener("click", closeModal);
+  }
+});
+
+// Close modal on Escape key
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && motivationModal && !motivationModal.classList.contains("hidden")) {
+    closeModal();
+  }
+});
+
 // Initialize UI
 renderUploadedImages();
 updateEstimateButtonState();

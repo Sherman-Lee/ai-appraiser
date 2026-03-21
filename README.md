@@ -1,4 +1,4 @@
-# AI Appraiser
+# HavenClaim AI Appraiser
 
 [![Python Tests](https://github.com/kweinmeister/ai-appraiser/actions/workflows/python-tests.yml/badge.svg)](https://github.com/kweinmeister/ai-appraiser/actions/workflows/python-tests.yml)
 
@@ -27,7 +27,7 @@ This application is intended for informational purposes only and should not subs
 
 ## Architecture
 
-The AI Appraiser application follows a client-server architecture:
+The HavenClaim application follows a client-server architecture:
 
 - **Frontend ([index.html](./index.html)):** The client-side interface built with HTML, Tailwind CSS, and HTMX. It handles user interactions, image uploads, and displays valuation results.
 - **Backend ([server.py](./server.py)):** A FastAPI server that handles API requests. It interacts with Google Cloud Storage (optional) and the Gemini API for image processing and valuation.

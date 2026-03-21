@@ -340,7 +340,7 @@ async def estimate_item_value(
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
-    with open(pathlib.Path(__file__).parent / "index.html") as f:
+    with open(pathlib.Path(__file__).parent / "index.html", encoding="utf-8") as f:
         html_content = f.read()
     html_content = html_content.replace(
         "let defaultCurrency = 'USD';",
