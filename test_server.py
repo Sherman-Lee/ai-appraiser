@@ -787,6 +787,25 @@ def test_value_endpoint_no_image_provided(mock_google_cloud_clients_and_app) -> 
     assert response.json() == {"detail": "At least one image is required."}
 
 
+def test_value_endpoint_no_description_provided(mock_google_cloud_clients_and_app) -> None:
+    client, _, mock_genai_client = mock_google_cloud_clients_and_app
+    mock_genai_client.models.generate_content.side_effect = create_mock_gemini_responses()
+    response = client.post(
+        "/value",
+        data={
+            "image_items": [
+                json.dumps({
+                    "kind": "inline",
+                    "data_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+                    "content_type": "image/png",
+                })
+            ]
+        },
+    )
+    assert response.status_code == 200
+
+
+
 def _assert_html_contains_currency(response, currency) -> None:
     """Helper to check for currency in the root HTML response."""
     assert response.status_code == 200

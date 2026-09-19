@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI):
     app.state.client = genai.Client(
         vertexai=True,
         project=PROJECT_ID,
-        location=LOCATION,
+        location="global",
     )
     yield
 
@@ -122,7 +122,7 @@ async def get_progress(task_id: str):
 
 @app.post("/value", response_model=MultiValuationResponse)
 async def estimate_item_value(
-    description: Annotated[str, Form()],
+    description: Annotated[str, Form()] = "",
     image_items: Annotated[list[str], Form()] = [],
     currency: Annotated[Currency, Form()] = Currency(DEFAULT_CURRENCY),
     task_id: Annotated[str | None, Form()] = None,
